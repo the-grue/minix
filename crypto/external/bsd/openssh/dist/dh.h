@@ -1,4 +1,3 @@
-/*	$NetBSD: dh.h,v 1.5 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: dh.h,v 1.13 2015/05/27 23:39:18 dtucker Exp $ */
 
 /*

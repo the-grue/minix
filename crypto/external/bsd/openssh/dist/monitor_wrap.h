@@ -1,4 +1,3 @@
-/*	$NetBSD: monitor_wrap.h,v 1.9 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: monitor_wrap.h,v 1.27 2015/05/01 03:23:51 djm Exp $ */
 
 /*
@@ -45,7 +44,7 @@ int mm_key_sign(Key *, u_char **, u_int *, const u_char *, u_int);
 void mm_inform_authserv(char *, char *);
 struct passwd *mm_getpwnamallow(const char *);
 char *mm_auth2_read_banner(void);
-int mm_auth_password(struct Authctxt *, const char *);
+int mm_auth_password(struct Authctxt *, char *);
 int mm_key_allowed(enum mm_keytype, char *, char *, Key *, int);
 int mm_user_key_allowed(struct passwd *, Key *, int);
 int mm_hostbased_key_allowed(struct passwd *, char *, char *, Key *);
@@ -72,6 +71,12 @@ int mm_sshpam_respond(void *, u_int, char **);
 void mm_sshpam_free_ctx(void *);
 #endif
 
+#ifdef SSH_AUDIT_EVENTS
+#include "audit.h"
+void mm_audit_event(ssh_audit_event_t);
+void mm_audit_run_command(const char *);
+#endif
+
 struct Session;
 void mm_terminate(void);
 int mm_pty_allocate(int *, int *, char *, size_t);
@@ -96,16 +101,6 @@ int mm_bsdauth_respond(void *, u_int, char **);
 /* skey */
 int mm_skey_query(void *, char **, char **, u_int *, char ***, u_int **);
 int mm_skey_respond(void *, u_int, char **);
-
-/* auth_krb */
-#ifdef KRB4
-int mm_auth_krb4(struct Authctxt *, void *, char **, void *);
-#endif
-#ifdef KRB5
-/* auth and reply are really krb5_data objects, but we don't want to
- * include all of the krb5 headers here */
-int mm_auth_krb5(void *authctxt, void *auth, char **client, void *reply);
-#endif
 
 /* zlib allocation hooks */
 void mm_init_compression(struct mm_master *);

@@ -1,8 +1,6 @@
-/*	$NetBSD: opacket.c,v 1.3 2015/07/03 01:00:00 christos Exp $	*/
 /* Written by Markus Friedl. Placed in the public domain.  */
 
 #include "includes.h"
-__RCSID("$NetBSD: opacket.c,v 1.3 2015/07/03 01:00:00 christos Exp $");
 
 #include "ssherr.h"
 #include "packet.h"
@@ -97,6 +95,7 @@ ssh_packet_put_bignum2(struct ssh *ssh, BIGNUM * value)
 		fatal("%s: %s", __func__, ssh_err(r));
 }
 
+# ifdef OPENSSL_HAS_ECC
 void
 ssh_packet_put_ecpoint(struct ssh *ssh, const EC_GROUP *curve,
     const EC_POINT *point)
@@ -106,27 +105,18 @@ ssh_packet_put_ecpoint(struct ssh *ssh, const EC_GROUP *curve,
 	if ((r = sshpkt_put_ec(ssh, point, curve)) != 0)
 		fatal("%s: %s", __func__, ssh_err(r));
 }
+# endif
 #endif /* WITH_OPENSSL */
 
-int
+void
 ssh_packet_send(struct ssh *ssh)
 {
 	int r;
 
 	if ((r = sshpkt_send(ssh)) != 0)
 		fatal("%s: %s", __func__, ssh_err(r));
-	return r;
 }
 
-int
-ssh_packet_sendx(struct ssh *ssh)
-{
-	int r;
-
-	if ((r = sshpkt_sendx(ssh)) < 0)
-		fatal("%s: %s", __func__, ssh_err(r));
-	return r;
-}
 u_int
 ssh_packet_get_char(struct ssh *ssh)
 {
@@ -181,6 +171,7 @@ ssh_packet_get_bignum2(struct ssh *ssh, BIGNUM * value)
 		fatal("%s: %s", __func__, ssh_err(r));
 }
 
+# ifdef OPENSSL_HAS_ECC
 void
 ssh_packet_get_ecpoint(struct ssh *ssh, const EC_GROUP *curve, EC_POINT *point)
 {
@@ -189,6 +180,7 @@ ssh_packet_get_ecpoint(struct ssh *ssh, const EC_GROUP *curve, EC_POINT *point)
 	if ((r = sshpkt_get_ec(ssh, point, curve)) != 0)
 		fatal("%s: %s", __func__, ssh_err(r));
 }
+# endif
 #endif /* WITH_OPENSSL */
 
 void *
@@ -310,18 +302,17 @@ packet_write_wait(void)
 {
 	int r;
 
-	if ((r = ssh_packet_write_wait(active_state)) < 0)
+	if ((r = ssh_packet_write_wait(active_state)) != 0)
 		sshpkt_fatal(active_state, __func__, r);
 }
 
-int
+void
 packet_write_poll(void)
 {
 	int r;
 
-	if ((r = ssh_packet_write_poll(active_state)) < 0)
+	if ((r = ssh_packet_write_poll(active_state)) != 0)
 		sshpkt_fatal(active_state, __func__, r);
-	return r;
 }
 
 void
@@ -331,4 +322,28 @@ packet_read_expect(int expected_type)
 
 	if ((r = ssh_packet_read_expect(active_state, expected_type)) != 0)
 		sshpkt_fatal(active_state, __func__, r);
+}
+
+void
+packet_disconnect(const char *fmt, ...)
+{
+	char buf[1024];
+	va_list args;
+
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+	ssh_packet_disconnect(active_state, "%s", buf);
+}
+
+void
+packet_send_debug(const char *fmt, ...)
+{
+	char buf[1024];
+	va_list args;
+
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+	ssh_packet_send_debug(active_state, "%s", buf);
 }

@@ -4,8 +4,8 @@
  * Public Domain, Author: Daniel J. Bernstein
  * Copied from nacl-20110221/crypto_verify/32/ref/verify.c
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: verify.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include "crypto_api.h"
 

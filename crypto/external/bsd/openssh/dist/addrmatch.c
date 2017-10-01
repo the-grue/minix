@@ -1,4 +1,3 @@
-/*	$NetBSD: addrmatch.c,v 1.9 2015/08/13 10:33:21 christos Exp $	*/
 /*	$OpenBSD: addrmatch.c,v 1.10 2015/07/08 19:04:21 markus Exp $ */
 
 /*
@@ -18,7 +17,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: addrmatch.c,v 1.9 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -81,8 +80,8 @@ masklen_valid(int af, u_int masklen)
 static int
 addr_sa_to_xaddr(struct sockaddr *sa, socklen_t slen, struct xaddr *xa)
 {
-	struct sockaddr_in *in4 = (struct sockaddr_in *)(void *)sa;
-	struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)(void *)sa;
+	struct sockaddr_in *in4 = (struct sockaddr_in *)sa;
+	struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)sa;
 
 	memset(xa, '\0', sizeof(*xa));
 
@@ -98,7 +97,9 @@ addr_sa_to_xaddr(struct sockaddr *sa, socklen_t slen, struct xaddr *xa)
 			return -1;
 		xa->af = AF_INET6;
 		memcpy(&xa->v6, &in6->sin6_addr, sizeof(xa->v6));
+#ifdef HAVE_STRUCT_SOCKADDR_IN6_SIN6_SCOPE_ID
 		xa->scope_id = in6->sin6_scope_id;
+#endif
 		break;
 	default:
 		return -1;
@@ -312,7 +313,7 @@ static int
 addr_pton_cidr(const char *p, struct xaddr *n, u_int *l)
 {
 	struct xaddr tmp;
-	unsigned int masklen = 999;
+	long unsigned int masklen = 999;
 	char addrbuf[64], *mp, *cp;
 
 	/* Don't modify argument */

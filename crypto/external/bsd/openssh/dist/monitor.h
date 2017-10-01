@@ -1,4 +1,3 @@
-/*	$NetBSD: monitor.h,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: monitor.h,v 1.19 2015/01/19 19:52:16 markus Exp $ */
 
 /*
@@ -57,11 +56,6 @@ enum monitor_reqtype {
 	MONITOR_REQ_GSSUSEROK = 46, MONITOR_ANS_GSSUSEROK = 47,
 	MONITOR_REQ_GSSCHECKMIC = 48, MONITOR_ANS_GSSCHECKMIC = 49,
 	MONITOR_REQ_TERM = 50,
-	MONITOR_REQ_JPAKE_STEP1 = 52, MONITOR_ANS_JPAKE_STEP1 = 53,
-	MONITOR_REQ_JPAKE_GET_PWDATA = 54, MONITOR_ANS_JPAKE_GET_PWDATA = 55,
-	MONITOR_REQ_JPAKE_STEP2 = 56, MONITOR_ANS_JPAKE_STEP2 = 57,
-	MONITOR_REQ_JPAKE_KEY_CONFIRM = 58, MONITOR_ANS_JPAKE_KEY_CONFIRM = 59,
-	MONITOR_REQ_JPAKE_CHECK_CONFIRM = 60, MONITOR_ANS_JPAKE_CHECK_CONFIRM = 61,
 
 	MONITOR_REQ_PAM_START = 100,
 	MONITOR_REQ_PAM_ACCOUNT = 102, MONITOR_ANS_PAM_ACCOUNT = 103,
@@ -70,9 +64,6 @@ enum monitor_reqtype {
 	MONITOR_REQ_PAM_RESPOND = 108, MONITOR_ANS_PAM_RESPOND = 109,
 	MONITOR_REQ_PAM_FREE_CTX = 110, MONITOR_ANS_PAM_FREE_CTX = 111,
 	MONITOR_REQ_AUDIT_EVENT = 112, MONITOR_REQ_AUDIT_COMMAND = 113,
-
-        MONITOR_REQ_KRB4 = 200, MONITOR_ANS_KRB4 = 201,
-	MONITOR_REQ_KRB5 = 202, MONITOR_ANS_KRB5 = 203,
 
 };
 
@@ -94,7 +85,7 @@ void monitor_sync(struct monitor *);
 
 struct Authctxt;
 void monitor_child_preauth(struct Authctxt *, struct monitor *);
-__dead void monitor_child_postauth(struct monitor *);
+void monitor_child_postauth(struct monitor *);
 
 struct mon_table;
 int monitor_read(struct monitor*, struct mon_table *, struct mon_table **);

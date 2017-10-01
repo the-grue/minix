@@ -1,4 +1,3 @@
-/*	$NetBSD: dns.c,v 1.12 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: dns.c,v 1.35 2015/08/20 22:32:42 deraadt Exp $ */
 
 /*
@@ -27,11 +26,12 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: dns.c,v 1.12 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/socket.h>
 
 #include <netdb.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -42,7 +42,6 @@ __RCSID("$NetBSD: dns.c,v 1.12 2015/08/21 08:20:59 christos Exp $");
 #include "ssherr.h"
 #include "dns.h"
 #include "log.h"
-#include "getrrsetbyname.h"
 #include "digest.h"
 
 static const char *errset_text[] = {
@@ -288,8 +287,8 @@ verify_host_key_dns(const char *hostname, struct sockaddr *address,
 		if (hostkey_algorithm == dnskey_algorithm &&
 		    hostkey_digest_type == dnskey_digest_type) {
 			if (hostkey_digest_len == dnskey_digest_len &&
-			    consttime_memequal(hostkey_digest, dnskey_digest,
-			    hostkey_digest_len))
+			    timingsafe_bcmp(hostkey_digest, dnskey_digest,
+			    hostkey_digest_len) == 0)
 				*flags |= DNS_VERIFY_MATCH;
 		}
 		free(dnskey_digest);

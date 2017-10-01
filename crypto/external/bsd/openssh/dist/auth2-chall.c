@@ -1,4 +1,3 @@
-/*	$NetBSD: auth2-chall.c,v 1.9 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: auth2-chall.c,v 1.43 2015/07/18 07:57:14 djm Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -26,9 +25,10 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth2-chall.c,v 1.9 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -44,7 +44,7 @@ __RCSID("$NetBSD: auth2-chall.c,v 1.9 2015/08/13 10:33:21 christos Exp $");
 #include "misc.h"
 #include "servconf.h"
 
-/* import */    
+/* import */
 extern ServerOptions options;
 
 static int auth2_challenge_start(Authctxt *);
@@ -87,14 +87,13 @@ struct KbdintAuthctxt
 };
 
 #ifdef USE_PAM
-void remove_kbdint_device(const char *);
 void
-remove_kbdint_device(const char *xdevname)
+remove_kbdint_device(const char *devname)
 {
 	int i, j;
 
 	for (i = 0; devices[i] != NULL; i++)
-		if (strcmp(devices[i]->name, xdevname) == 0) {
+		if (strcmp(devices[i]->name, devname) == 0) {
 			for (j = i; devices[j] != NULL; j++)
 				devices[j] = devices[j+1];
 			i--;
@@ -124,7 +123,7 @@ kbdint_alloc(const char *devs)
 			    strlen(devices[i]->name));
 		}
 		buffer_append(&b, "\0", 1);
-		kbdintctxt->devices = xstrdup((const char *)buffer_ptr(&b));
+		kbdintctxt->devices = xstrdup(buffer_ptr(&b));
 		buffer_free(&b);
 	} else {
 		kbdintctxt->devices = xstrdup(devs);
@@ -368,14 +367,15 @@ privsep_challenge_enable(void)
 #ifdef SKEY
 	extern KbdintDevice mm_skey_device;
 #endif
-	/* As long as SSHv1 has devices[0] hard coded this is fine */
+
 #ifdef BSD_AUTH
 	devices[n++] = &mm_bsdauth_device;
-#endif
+#else
 #ifdef USE_PAM
 	devices[n++] = &mm_sshpam_device;
 #endif
 #ifdef SKEY
 	devices[n++] = &mm_skey_device;
+#endif
 #endif
 }

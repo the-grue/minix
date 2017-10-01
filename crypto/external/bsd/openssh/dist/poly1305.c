@@ -4,11 +4,13 @@
  */
 
 /* $OpenBSD: poly1305.c,v 1.3 2013/12/19 22:57:13 djm Exp $ */
+
 #include "includes.h"
-__RCSID("$NetBSD: poly1305.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include <sys/types.h>
-#include <stdint.h>
+#ifdef HAVE_STDINT_H
+# include <stdint.h>
+#endif
 
 #include "poly1305.h"
 

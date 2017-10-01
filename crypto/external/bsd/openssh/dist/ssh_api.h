@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh_api.h,v 1.2 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ssh_api.h,v 1.1 2015/01/19 20:30:23 markus Exp $ */
 /*
  * Copyright (c) 2012 Markus Friedl.  All rights reserved.
@@ -19,9 +18,10 @@
 #ifndef API_H
 #define API_H
 
-#include <sys/queue.h>
 #include <sys/types.h>
 #include <signal.h>
+
+#include "openbsd-compat/sys-queue.h"
 
 #include "cipher.h"
 #include "sshkey.h"

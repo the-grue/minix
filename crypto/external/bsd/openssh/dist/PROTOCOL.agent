@@ -558,4 +558,3 @@ Locking and unlocking affects both protocol 1 and protocol 2 keys.
 	SSH_AGENT_CONSTRAIN_CONFIRM			2
 
 $OpenBSD: PROTOCOL.agent,v 1.8 2015/05/08 03:56:51 djm Exp $
-$NetBSD: PROTOCOL.agent,v 1.6 2015/07/03 00:59:59 christos Exp $

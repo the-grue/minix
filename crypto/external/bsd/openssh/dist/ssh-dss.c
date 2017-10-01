@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-dss.c,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ssh-dss.c,v 1.32 2014/06/24 01:13:21 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -25,12 +24,16 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-dss.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_OPENSSL
+
 #include <sys/types.h>
 
 #include <openssl/bn.h>
+#include <openssl/dsa.h>
 #include <openssl/evp.h>
 
+#include <stdarg.h>
 #include <string.h>
 
 #include "sshbuf.h"
@@ -216,3 +219,4 @@ ssh_dss_verify(const struct sshkey *key,
 	}
 	return ret;
 }
+#endif /* WITH_OPENSSL */

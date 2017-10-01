@@ -1,4 +1,3 @@
-/*	$NetBSD: auth-chall.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth-chall.c,v 1.14 2014/06/24 01:13:21 djm Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth-chall.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -36,18 +35,14 @@ __RCSID("$NetBSD: auth-chall.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
 #include "hostfile.h"
 #include "auth.h"
 #include "log.h"
-#ifdef USE_PAM
 #include "misc.h"
-#include "buffer.h"
 #include "servconf.h"
-extern ServerOptions options;
-void remove_kbdint_device(const char *);
-#endif
 
 /* limited protocol v1 interface to kbd-interactive authentication */
 
 extern KbdintDevice *devices[];
 static KbdintDevice *device;
+extern ServerOptions options;
 
 char *
 get_challenge(Authctxt *authctxt)
@@ -87,17 +82,44 @@ get_challenge(Authctxt *authctxt)
 int
 verify_response(Authctxt *authctxt, const char *response)
 {
-	char *resp[1];
+	char *resp[1], *name, *info, **prompts;
+	u_int i, numprompts, *echo_on;
 	int authenticated = 0;
 
 	if (device == NULL)
 		return 0;
 	if (authctxt->kbdintctxt == NULL)
 		return 0;
-	resp[0] = __UNCONST(response);
-	if (device->respond(authctxt->kbdintctxt, 1, resp) == 0)
+	resp[0] = (char *)response;
+	switch (device->respond(authctxt->kbdintctxt, 1, resp)) {
+	case 0: /* Success */
 		authenticated = 1;
+		break;
+	case 1: /* Postponed - retry with empty query for PAM */
+		if ((device->query(authctxt->kbdintctxt, &name, &info,
+		    &numprompts, &prompts, &echo_on)) != 0)
+			break;
+		if (numprompts == 0 &&
+		    device->respond(authctxt->kbdintctxt, 0, resp) == 0)
+			authenticated = 1;
+
+		for (i = 0; i < numprompts; i++)
+			free(prompts[i]);
+		free(prompts);
+		free(name);
+		free(echo_on);
+		free(info);
+		break;
+	}
 	device->free_ctx(authctxt->kbdintctxt);
 	authctxt->kbdintctxt = NULL;
 	return authenticated;
+}
+void
+abandon_challenge_response(Authctxt *authctxt)
+{
+	if (authctxt->kbdintctxt != NULL) {
+		device->free_ctx(authctxt->kbdintctxt);
+		authctxt->kbdintctxt = NULL;
+	}
 }

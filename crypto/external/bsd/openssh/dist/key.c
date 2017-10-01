@@ -1,12 +1,10 @@
-/*	$NetBSD: key.c,v 1.17 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: key.c,v 1.128 2015/07/03 03:43:18 djm Exp $ */
 /*
  * placed in the public domain
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: key.c,v 1.17 2015/08/13 10:33:21 christos Exp $");
-#include <sys/param.h>
+
 #include <sys/types.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -239,7 +237,7 @@ key_cert_check_authority(const Key *k, int want_host, int require_principal,
 	return 0;
 }
 
-#ifdef WITH_OPENSSL
+#if defined(WITH_OPENSSL) && defined(OPENSSL_HAS_ECC)
 int
 key_ec_validate_public(const EC_GROUP *group, const EC_POINT *public)
 {

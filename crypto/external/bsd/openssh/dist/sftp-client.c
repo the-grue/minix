@@ -1,4 +1,3 @@
-/*	$NetBSD: sftp-client.c,v 1.14 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: sftp-client.c,v 1.120 2015/05/28 04:50:53 djm Exp $ */
 /*
  * Copyright (c) 2001-2004 Damien Miller <djm@openbsd.org>
@@ -22,14 +21,19 @@
 /* XXX: copy between two remote sites */
 
 #include "includes.h"
-__RCSID("$NetBSD: sftp-client.c,v 1.14 2015/07/03 01:00:00 christos Exp $");
+
 #include <sys/param.h>	/* MIN MAX */
 #include <sys/types.h>
-#include <sys/poll.h>
-#include <sys/queue.h>
-#include <sys/stat.h>
-#include <sys/time.h>
+#ifdef HAVE_SYS_STATVFS_H
 #include <sys/statvfs.h>
+#endif
+#include "openbsd-compat/sys-queue.h"
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 #include <sys/uio.h>
 
 #include <dirent.h>
@@ -107,7 +111,7 @@ send_msg(struct sftp_conn *conn, struct sshbuf *m)
 	put_u32(mlen, sshbuf_len(m));
 	iov[0].iov_base = mlen;
 	iov[0].iov_len = sizeof(mlen);
-	iov[1].iov_base = __UNCONST(sshbuf_ptr(m));
+	iov[1].iov_base = (u_char *)sshbuf_ptr(m);
 	iov[1].iov_len = sshbuf_len(m);
 
 	if (atomiciov6(writev, conn->fd_out, iov, 2,
@@ -1161,7 +1165,6 @@ do_download(struct sftp_conn *conn, const char *remote_path,
 	struct request *req;
 	u_char type;
 
-	status = -1;
 	TAILQ_INIT(&requests);
 
 	if (a == NULL && (a = do_stat(conn, remote_path, 0)) == NULL)
@@ -1402,7 +1405,11 @@ do_download(struct sftp_conn *conn, const char *remote_path,
 		else
 			status = SSH2_FX_OK;
 		/* Override umask and utimes if asked */
+#ifdef HAVE_FCHMOD
 		if (preserve_flag && fchmod(local_fd, mode) == -1)
+#else
+		if (preserve_flag && chmod(local_path, mode) == -1)
+#endif /* HAVE_FCHMOD */
 			error("Couldn't set mode on \"%s\": %s", local_path,
 			    strerror(errno));
 		if (preserve_flag &&
@@ -1658,7 +1665,8 @@ do_upload(struct sftp_conn *conn, const char *local_path,
 			len = 0;
 		else do
 			len = read(local_fd, data, conn->transfer_buflen);
-		while ((len == -1) && (errno == EINTR || errno == EAGAIN));
+		while ((len == -1) &&
+		    (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK));
 
 		if (len == -1)
 			fatal("Couldn't read from \"%s\": %s", local_path,

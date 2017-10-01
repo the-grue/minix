@@ -1,4 +1,3 @@
-/*	$NetBSD: clientloop.c,v 1.15 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: clientloop.c,v 1.275 2015/07/10 06:21:53 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -61,20 +60,25 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: clientloop.c,v 1.15 2015/08/13 10:33:21 christos Exp $");
 
 #include <sys/param.h>	/* MIN MAX */
 #include <sys/types.h>
 #include <sys/ioctl.h>
-#include <sys/stat.h>
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 #include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/queue.h>
 
 #include <ctype.h>
 #include <errno.h>
+#ifdef HAVE_PATHS_H
 #include <paths.h>
+#endif
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +87,7 @@ __RCSID("$NetBSD: clientloop.c,v 1.15 2015/08/13 10:33:21 christos Exp $");
 #include <unistd.h>
 #include <limits.h>
 
+#include "openbsd-compat/sys-queue.h"
 #include "xmalloc.h"
 #include "ssh.h"
 #include "ssh1.h"
@@ -107,7 +112,6 @@ __RCSID("$NetBSD: clientloop.c,v 1.15 2015/08/13 10:33:21 christos Exp $");
 #include "match.h"
 #include "msg.h"
 #include "roaming.h"
-#include "getpeereid.h"
 #include "ssherr.h"
 #include "hostfile.h"
 
@@ -610,16 +614,13 @@ client_wait_until_can_do_something(fd_set **readsetp, fd_set **writesetp,
 		 * buffered data to send to the server.
 		 */
 		if (!stdin_eof && packet_not_very_much_data_to_write())
-			if ((ret = fileno(stdin)) != -1)
-				FD_SET(ret, *readsetp);
+			FD_SET(fileno(stdin), *readsetp);
 
 		/* Select stdout/stderr if have data in buffer. */
 		if (buffer_len(&stdout_buffer) > 0)
-			if ((ret = fileno(stdout)) != -1)
-				FD_SET(ret, *writesetp);
+			FD_SET(fileno(stdout), *writesetp);
 		if (buffer_len(&stderr_buffer) > 0)
-			if ((ret = fileno(stderr)) != -1)
-				FD_SET(ret, *writesetp);
+			FD_SET(fileno(stderr), *writesetp);
 	} else {
 		/* channel_prepare_select could have closed the last channel */
 		if (session_closed && !channel_still_open() &&
@@ -735,7 +736,7 @@ static void
 client_process_net_input(fd_set *readset)
 {
 	int len, cont = 0;
-	char buf[8192];
+	char buf[SSH_IOBUFSZ];
 
 	/*
 	 * Read input from the server, and add any such data to the buffer of
@@ -760,7 +761,8 @@ client_process_net_input(fd_set *readset)
 		 * There is a kernel bug on Solaris that causes select to
 		 * sometimes wake up even though there is no data available.
 		 */
-		if (len < 0 && (errno == EAGAIN || errno == EINTR))
+		if (len < 0 &&
+		    (errno == EAGAIN || errno == EINTR || errno == EWOULDBLOCK))
 			len = 0;
 
 		if (len < 0) {
@@ -949,9 +951,8 @@ process_cmdline(void)
 		goto out;
 	}
 
-	s++;
-	while (isspace((u_char)*s))
-		s++;
+	while (isspace((u_char)*++s))
+		;
 
 	/* XXX update list of forwards in options */
 	if (delete) {
@@ -1066,7 +1067,7 @@ print_escape_help(Buffer *b, int escape_char, int protocol2, int mux_client,
  */
 static int
 process_escapes(Channel *c, Buffer *bin, Buffer *bout, Buffer *berr,
-    const char *buf, int len)
+    char *buf, int len)
 {
 	char string[1024];
 	pid_t pid;
@@ -1307,71 +1308,73 @@ process_escapes(Channel *c, Buffer *bin, Buffer *bout, Buffer *berr,
 static void
 client_process_input(fd_set *readset)
 {
-	int len, fd;
-	char buf[8192];
+	int len;
+	char buf[SSH_IOBUFSZ];
 
 	/* Read input from stdin. */
-	if ((fd = fileno(stdin)) == -1 || !FD_ISSET(fd, readset))
-		return;
-	/* Read as much as possible. */
-	len = read(fd, buf, sizeof(buf));
-	if (len < 0 && (errno == EAGAIN || errno == EINTR))
-		return;		/* we'll try again later */
-	if (len <= 0) {
-		/*
-		 * Received EOF or error.  They are treated
-		 * similarly, except that an error message is printed
-		 * if it was an error condition.
-		 */
-		if (len < 0) {
-			snprintf(buf, sizeof buf, "read: %.100s\r\n",
-			    strerror(errno));
-			buffer_append(&stderr_buffer, buf, strlen(buf));
+	if (FD_ISSET(fileno(stdin), readset)) {
+		/* Read as much as possible. */
+		len = read(fileno(stdin), buf, sizeof(buf));
+		if (len < 0 &&
+		    (errno == EAGAIN || errno == EINTR || errno == EWOULDBLOCK))
+			return;		/* we'll try again later */
+		if (len <= 0) {
+			/*
+			 * Received EOF or error.  They are treated
+			 * similarly, except that an error message is printed
+			 * if it was an error condition.
+			 */
+			if (len < 0) {
+				snprintf(buf, sizeof buf, "read: %.100s\r\n",
+				    strerror(errno));
+				buffer_append(&stderr_buffer, buf, strlen(buf));
+			}
+			/* Mark that we have seen EOF. */
+			stdin_eof = 1;
+			/*
+			 * Send an EOF message to the server unless there is
+			 * data in the buffer.  If there is data in the
+			 * buffer, no message will be sent now.  Code
+			 * elsewhere will send the EOF when the buffer
+			 * becomes empty if stdin_eof is set.
+			 */
+			if (buffer_len(&stdin_buffer) == 0) {
+				packet_start(SSH_CMSG_EOF);
+				packet_send();
+			}
+		} else if (escape_char1 == SSH_ESCAPECHAR_NONE) {
+			/*
+			 * Normal successful read, and no escape character.
+			 * Just append the data to buffer.
+			 */
+			buffer_append(&stdin_buffer, buf, len);
+		} else {
+			/*
+			 * Normal, successful read.  But we have an escape
+			 * character and have to process the characters one
+			 * by one.
+			 */
+			if (process_escapes(NULL, &stdin_buffer,
+			    &stdout_buffer, &stderr_buffer, buf, len) == -1)
+				return;
 		}
-		/* Mark that we have seen EOF. */
-		stdin_eof = 1;
-		/*
-		 * Send an EOF message to the server unless there is
-		 * data in the buffer.  If there is data in the
-		 * buffer, no message will be sent now.  Code
-		 * elsewhere will send the EOF when the buffer
-		 * becomes empty if stdin_eof is set.
-		 */
-		if (buffer_len(&stdin_buffer) == 0) {
-			packet_start(SSH_CMSG_EOF);
-			packet_send();
-		}
-	} else if (escape_char1 == SSH_ESCAPECHAR_NONE) {
-		/*
-		 * Normal successful read, and no escape character.
-		 * Just append the data to buffer.
-		 */
-		buffer_append(&stdin_buffer, buf, len);
-	} else {
-		/*
-		 * Normal, successful read.  But we have an escape
-		 * character and have to process the characters one
-		 * by one.
-		 */
-		if (process_escapes(NULL, &stdin_buffer,
-		    &stdout_buffer, &stderr_buffer, buf, len) == -1)
-			return;
 	}
 }
 
 static void
 client_process_output(fd_set *writeset)
 {
-	int len, fd;
+	int len;
 	char buf[100];
 
 	/* Write buffered output to stdout. */
-	if ((fd = fileno(stdout)) != -1 && FD_ISSET(fd, writeset)) {
+	if (FD_ISSET(fileno(stdout), writeset)) {
 		/* Write as much data as possible. */
-		len = write(fd, buffer_ptr(&stdout_buffer),
+		len = write(fileno(stdout), buffer_ptr(&stdout_buffer),
 		    buffer_len(&stdout_buffer));
 		if (len <= 0) {
-			if (errno == EINTR || errno == EAGAIN)
+			if (errno == EINTR || errno == EAGAIN ||
+			    errno == EWOULDBLOCK)
 				len = 0;
 			else {
 				/*
@@ -1389,12 +1392,13 @@ client_process_output(fd_set *writeset)
 		buffer_consume(&stdout_buffer, len);
 	}
 	/* Write buffered output to stderr. */
-	if ((fd = fileno(stderr)) != -1 && FD_ISSET(fd, writeset)) {
+	if (FD_ISSET(fileno(stderr), writeset)) {
 		/* Write as much data as possible. */
-		len = write(fd, buffer_ptr(&stderr_buffer),
+		len = write(fileno(stderr), buffer_ptr(&stderr_buffer),
 		    buffer_len(&stderr_buffer));
 		if (len <= 0) {
-			if (errno == EINTR || errno == EAGAIN)
+			if (errno == EINTR || errno == EAGAIN ||
+			    errno == EWOULDBLOCK)
 				len = 0;
 			else {
 				/*
@@ -1450,7 +1454,7 @@ client_filter_cleanup(int cid, void *ctx)
 }
 
 int
-client_simple_escape_filter(Channel *c, const char *buf, int len)
+client_simple_escape_filter(Channel *c, char *buf, int len)
 {
 	if (c->extended_usage != CHAN_EXTENDED_WRITE)
 		return 0;
@@ -1608,8 +1612,7 @@ client_loop(int have_pty, int escape_char_arg, int ssh2_chan_id)
 			channel_after_select(readset, writeset);
 			if (need_rekeying || packet_need_rekeying()) {
 				debug("need rekeying");
-				if (active_state->kex != NULL)
-					active_state->kex->done = 0;
+				active_state->kex->done = 0;
 				if ((r = kex_send_kexinit(active_state)) != 0)
 					fatal("%s: kex_send_kexinit: %s",
 					    __func__, ssh_err(r));
@@ -1920,15 +1923,9 @@ client_request_x11(const char *request_type, int rchan)
 	sock = x11_connect_display();
 	if (sock < 0)
 		return NULL;
-	/* again is this really necessary for X11? */
-	if (options.hpn_disabled) 
 	c = channel_new("x11",
 	    SSH_CHANNEL_X11_OPEN, sock, sock, -1,
 	    CHAN_TCP_WINDOW_DEFAULT, CHAN_X11_PACKET_DEFAULT, 0, "x11", 1);
-	else 
-		c = channel_new("x11",
-		    SSH_CHANNEL_X11_OPEN, sock, sock, -1,
-		    options.hpn_buffer_size, CHAN_X11_PACKET_DEFAULT, 0, "x11", 1);
 	c->force_drain = 1;
 	return c;
 }
@@ -1951,16 +1948,10 @@ client_request_agent(const char *request_type, int rchan)
 			    __func__, ssh_err(r));
 		return NULL;
 	}
-	if (options.hpn_disabled) 
 	c = channel_new("authentication agent connection",
 	    SSH_CHANNEL_OPEN, sock, sock, -1,
 	    CHAN_X11_WINDOW_DEFAULT, CHAN_TCP_PACKET_DEFAULT, 0,
 	    "authentication agent connection", 1);
-	else
-		c = channel_new("authentication agent connection",
-		    SSH_CHANNEL_OPEN, sock, sock, -1,
-		    options.hpn_buffer_size, options.hpn_buffer_size, 0,
-		    "authentication agent connection", 1);
 	c->force_drain = 1;
 	return c;
 }
@@ -1987,13 +1978,15 @@ client_request_tun_fwd(int tun_mode, int local_tun, int remote_tun)
 		return -1;
 	}
 
-	if(options.hpn_disabled)
 	c = channel_new("tun", SSH_CHANNEL_OPENING, fd, fd, -1,
 	    CHAN_TCP_WINDOW_DEFAULT, CHAN_TCP_PACKET_DEFAULT, 0, "tun", 1);
-	else
-	c = channel_new("tun", SSH_CHANNEL_OPENING, fd, fd, -1,
-	    options.hpn_buffer_size, CHAN_TCP_PACKET_DEFAULT, 0, "tun", 1);
 	c->datagram = 1;
+
+#if defined(SSH_TUN_FILTER)
+	if (options.tun_open == SSH_TUNMODE_POINTOPOINT)
+		channel_register_filter(c->self, sys_tun_infilter,
+		    sys_tun_outfilter, NULL, NULL);
+#endif
 
 	packet_start(SSH2_MSG_CHANNEL_OPEN);
 	packet_put_cstring("tun@openssh.com");

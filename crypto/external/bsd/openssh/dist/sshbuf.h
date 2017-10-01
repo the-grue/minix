@@ -21,8 +21,12 @@
 #include <sys/types.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <openssl/bn.h>
-#include <openssl/ec.h>
+#ifdef WITH_OPENSSL
+# include <openssl/bn.h>
+# ifdef OPENSSL_HAS_ECC
+#  include <openssl/ec.h>
+# endif /* OPENSSL_HAS_ECC */
+#endif /* WITH_OPENSSL */
 
 #define SSHBUF_SIZE_MAX		0x8000000	/* Hard maximum size */
 #define SSHBUF_REFS_MAX		0x100000	/* Max child buffers */
@@ -161,8 +165,7 @@ int	sshbuf_putb(struct sshbuf *buf, const struct sshbuf *v);
 /* Append using a printf(3) format */
 int	sshbuf_putf(struct sshbuf *buf, const char *fmt, ...)
 	    __attribute__((format(printf, 2, 3)));
-int	sshbuf_putfv(struct sshbuf *buf, const char *fmt, va_list ap)
-	    __printflike(2, 0);
+int	sshbuf_putfv(struct sshbuf *buf, const char *fmt, va_list ap);
 
 /* Functions to extract or store big-endian words of various sizes */
 int	sshbuf_get_u64(struct sshbuf *buf, u_int64_t *valp);
@@ -205,17 +208,21 @@ int	sshbuf_peek_string_direct(const struct sshbuf *buf, const u_char **valp,
  * Functions to extract or store SSH wire encoded bignums and elliptic
  * curve points.
  */
-int	sshbuf_get_bignum2(struct sshbuf *buf, BIGNUM *v);
-int	sshbuf_get_bignum1(struct sshbuf *buf, BIGNUM *v);
+int	sshbuf_put_bignum2_bytes(struct sshbuf *buf, const void *v, size_t len);
 int	sshbuf_get_bignum2_bytes_direct(struct sshbuf *buf,
 	    const u_char **valp, size_t *lenp);
+#ifdef WITH_OPENSSL
+int	sshbuf_get_bignum2(struct sshbuf *buf, BIGNUM *v);
+int	sshbuf_get_bignum1(struct sshbuf *buf, BIGNUM *v);
 int	sshbuf_put_bignum2(struct sshbuf *buf, const BIGNUM *v);
 int	sshbuf_put_bignum1(struct sshbuf *buf, const BIGNUM *v);
-int	sshbuf_put_bignum2_bytes(struct sshbuf *buf, const void *v, size_t len);
+# ifdef OPENSSL_HAS_ECC
 int	sshbuf_get_ec(struct sshbuf *buf, EC_POINT *v, const EC_GROUP *g);
 int	sshbuf_get_eckey(struct sshbuf *buf, EC_KEY *v);
 int	sshbuf_put_ec(struct sshbuf *buf, const EC_POINT *v, const EC_GROUP *g);
 int	sshbuf_put_eckey(struct sshbuf *buf, const EC_KEY *v);
+# endif /* OPENSSL_HAS_ECC */
+#endif /* WITH_OPENSSL */
 
 /* Dump the contents of the buffer in a human-readable format */
 void	sshbuf_dump(struct sshbuf *buf, FILE *f);
@@ -234,22 +241,22 @@ int	sshbuf_b64tod(struct sshbuf *buf, const char *b64);
 
 /* Macros for decoding/encoding integers */
 #define PEEK_U64(p) \
-	(((u_int64_t)(((const u_char *)(p))[0]) << 56) | \
-	 ((u_int64_t)(((const u_char *)(p))[1]) << 48) | \
-	 ((u_int64_t)(((const u_char *)(p))[2]) << 40) | \
-	 ((u_int64_t)(((const u_char *)(p))[3]) << 32) | \
-	 ((u_int64_t)(((const u_char *)(p))[4]) << 24) | \
-	 ((u_int64_t)(((const u_char *)(p))[5]) << 16) | \
-	 ((u_int64_t)(((const u_char *)(p))[6]) << 8) | \
-	  (u_int64_t)(((const u_char *)(p))[7]))
+	(((u_int64_t)(((u_char *)(p))[0]) << 56) | \
+	 ((u_int64_t)(((u_char *)(p))[1]) << 48) | \
+	 ((u_int64_t)(((u_char *)(p))[2]) << 40) | \
+	 ((u_int64_t)(((u_char *)(p))[3]) << 32) | \
+	 ((u_int64_t)(((u_char *)(p))[4]) << 24) | \
+	 ((u_int64_t)(((u_char *)(p))[5]) << 16) | \
+	 ((u_int64_t)(((u_char *)(p))[6]) << 8) | \
+	  (u_int64_t)(((u_char *)(p))[7]))
 #define PEEK_U32(p) \
-	(((u_int32_t)(((const u_char *)(p))[0]) << 24) | \
-	 ((u_int32_t)(((const u_char *)(p))[1]) << 16) | \
-	 ((u_int32_t)(((const u_char *)(p))[2]) << 8) | \
-	  (u_int32_t)(((const u_char *)(p))[3]))
+	(((u_int32_t)(((u_char *)(p))[0]) << 24) | \
+	 ((u_int32_t)(((u_char *)(p))[1]) << 16) | \
+	 ((u_int32_t)(((u_char *)(p))[2]) << 8) | \
+	  (u_int32_t)(((u_char *)(p))[3]))
 #define PEEK_U16(p) \
-	(((u_int16_t)(((const u_char *)(p))[0]) << 8) | \
-	  (u_int16_t)(((const u_char *)(p))[1]))
+	(((u_int16_t)(((u_char *)(p))[0]) << 8) | \
+	  (u_int16_t)(((u_char *)(p))[1]))
 
 #define POKE_U64(p, v) \
 	do { \

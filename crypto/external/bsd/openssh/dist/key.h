@@ -1,4 +1,3 @@
-/*	$NetBSD: key.h,v 1.10 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: key.h,v 1.48 2015/07/03 03:43:18 djm Exp $ */
 
 /*
@@ -77,10 +76,10 @@ int	 key_cert_check_authority(const Key *, int, int, const char *,
 	    const char **);
 char	*key_alg_list(int, int);
 
-#ifdef WITH_OPENSSL
+#if defined(WITH_OPENSSL) && defined(OPENSSL_HAS_ECC)
 int	 key_ec_validate_public(const EC_GROUP *, const EC_POINT *);
 int	 key_ec_validate_private(const EC_KEY *);
-#endif /* WITH_OPENSSL */
+#endif /* defined(WITH_OPENSSL) && defined(OPENSSL_HAS_ECC) */
 
 Key	*key_from_blob(const u_char *, u_int);
 int	 key_to_blob(const Key *, u_char **, u_int *);

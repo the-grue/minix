@@ -1,4 +1,3 @@
-/*	$NetBSD: nchan.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: nchan.c,v 1.63 2010/01/26 01:28:35 djm Exp $ */
 /*
  * Copyright (c) 1999, 2000, 2001, 2002 Markus Friedl.  All rights reserved.
@@ -25,15 +24,15 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: nchan.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/queue.h>
 
 #include <errno.h>
 #include <string.h>
 #include <stdarg.h>
 
+#include "openbsd-compat/sys-queue.h"
 #include "ssh1.h"
 #include "ssh2.h"
 #include "buffer.h"
@@ -85,8 +84,8 @@ static void	chan_send_eow2(Channel *);
 static void	chan_shutdown_write(Channel *);
 static void	chan_shutdown_read(Channel *);
 
-static const char *ostates[] = { "open", "drain", "wait_ieof", "closed" };
-static const char *istates[] = { "open", "drain", "wait_oclose", "closed" };
+static char *ostates[] = { "open", "drain", "wait_ieof", "closed" };
+static char *istates[] = { "open", "drain", "wait_oclose", "closed" };
 
 static void
 chan_set_istate(Channel *c, u_int next)
@@ -512,7 +511,13 @@ chan_shutdown_read(Channel *c)
 		return;
 	debug2("channel %d: close_read", c->self);
 	if (c->sock != -1) {
-		if (shutdown(c->sock, SHUT_RD) < 0)
+		/*
+		 * shutdown(sock, SHUT_READ) may return ENOTCONN if the
+		 * write side has been closed already. (bug on Linux)
+		 * HP-UX may return ENOTCONN also.
+		 */
+		if (shutdown(c->sock, SHUT_RD) < 0
+		    && errno != ENOTCONN)
 			error("channel %d: chan_shutdown_read: "
 			    "shutdown() failed for fd %d [i%d o%d]: %.100s",
 			    c->self, c->sock, c->istate, c->ostate,

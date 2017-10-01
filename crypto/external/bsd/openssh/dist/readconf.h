@@ -1,4 +1,3 @@
-/*	$NetBSD: readconf.h,v 1.13 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: readconf.h,v 1.110 2015/07/10 06:21:53 markus Exp $ */
 
 /*
@@ -44,15 +43,6 @@ typedef struct {
 	int     pubkey_authentication;	/* Try ssh2 pubkey authentication. */
 	int     hostbased_authentication;	/* ssh2's rhosts_rsa */
 	int     challenge_response_authentication;
-#if defined(KRB4) || defined(KRB5)
-	int     kerberos_authentication;	/* Try Kerberos authentication. */
-#endif
-#if defined(AFS) || defined(KRB5)
-	int     kerberos_tgt_passing;	/* Try Kerberos TGT passing. */
-#endif
-#ifdef AFS
-	int     afs_token_passing;	/* Try AFS token passing. */
-#endif
 					/* Try S/Key or TIS, authentication. */
 	int     gss_authentication;	/* Try GSS authentication */
 	int     gss_deleg_creds;	/* Delegate GSS credentials */
@@ -69,11 +59,6 @@ typedef struct {
 	int     tcp_keep_alive;	/* Set SO_KEEPALIVE. */
 	int	ip_qos_interactive;	/* IP ToS/DSCP/class for interactive */
 	int	ip_qos_bulk;		/* IP ToS/DSCP/class for bulk traffic */
-	int     tcp_rcv_buf; /* user switch to set tcp recv buffer */
-	int	tcp_rcv_buf_poll; /* Option to poll recv buf every window transfer */
-	int 	hpn_disabled; 	 /* Switch to disable HPN buffer management */
-	int	hpn_buffer_size; /* User definable size for HPN buffer window */
-
 	LogLevel log_level;	/* Level for logging. */
 
 	int     port;		/* Port to connect. */
@@ -122,8 +107,6 @@ typedef struct {
 	int	enable_ssh_keysign;
 	int64_t rekey_limit;
 	int	rekey_interval;
-	int     none_switch;    /* Use none cipher */
-	int     none_enabled;   /* Allow none to be used */
 	int	no_host_authentication_for_localhost;
 	int	identities_only;
 	int	server_alive_interval;
@@ -150,7 +133,6 @@ typedef struct {
 	int	use_roaming;
 
 	int	request_tty;
-	int	send_version_first;
 
 	int	proxy_use_fdpass;
 

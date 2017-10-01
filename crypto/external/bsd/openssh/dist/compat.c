@@ -1,4 +1,3 @@
-/*	$NetBSD: compat.c,v 1.13 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: compat.c,v 1.97 2015/08/19 23:21:42 djm Exp $ */
 /*
  * Copyright (c) 1999, 2000, 2001, 2002 Markus Friedl.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: compat.c,v 1.13 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/types.h>
 
 #include <stdlib.h>
@@ -63,7 +62,7 @@ compat_datafellows(const char *version)
 {
 	int i;
 	static struct {
-		const char	*pat;
+		char	*pat;
 		int	bugs;
 	} check[] = {
 		{ "OpenSSH-2.0*,"
@@ -211,15 +210,6 @@ compat_datafellows(const char *version)
 			debug("match: %s pat %s compat 0x%08x",
 			    version, check[i].pat, check[i].bugs);
 			datafellows = check[i].bugs;	/* XXX for now */
-			/* Check to see if the remote side is OpenSSH and not HPN */
-			if(strstr(version,"OpenSSH") != NULL)
-			{
-				if (strstr(version,"hpn") == NULL)
-				{
-					datafellows |= SSH_BUG_LARGEWINDOW;
-					debug("Remote is NON-HPN aware");
-				}
-			}
 			return check[i].bugs;
 		}
 	}
@@ -265,7 +255,7 @@ proto_spec(const char *spec)
  * pattern list.
  */
 static char *
-filter_proposal(const char *proposal, const char *filter)
+filter_proposal(char *proposal, const char *filter)
 {
 	Buffer b;
 	char *orig_prop, *fix_prop;
@@ -289,8 +279,8 @@ filter_proposal(const char *proposal, const char *filter)
 	return fix_prop;
 }
 
-const char *
-compat_cipher_proposal(const char *cipher_prop)
+char *
+compat_cipher_proposal(char *cipher_prop)
 {
 	if (!(datafellows & SSH_BUG_BIGENDIANAES))
 		return cipher_prop;
@@ -315,8 +305,8 @@ compat_pkalg_proposal(char *pkalg_prop)
 	return pkalg_prop;
 }
 
-const char *
-compat_kex_proposal(const char *p)
+char *
+compat_kex_proposal(char *p)
 {
 	if ((datafellows & (SSH_BUG_CURVE25519PAD|SSH_OLD_DHGEX)) == 0)
 		return p;

@@ -1,4 +1,3 @@
-/*	$NetBSD: clientloop.h,v 1.10 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: clientloop.h,v 1.31 2013/06/02 23:36:29 dtucker Exp $ */
 
 /*
@@ -51,7 +50,7 @@ void	 client_stop_mux(void);
 /* Escape filter for protocol 2 sessions */
 void	*client_new_escape_filter_ctx(int);
 void	 client_filter_cleanup(int, void *);
-int	 client_simple_escape_filter(Channel *, const char *, int);
+int	 client_simple_escape_filter(Channel *, char *, int);
 
 /* Global request confirmation callbacks */
 typedef void global_confirm_cb(int, u_int32_t seq, void *);

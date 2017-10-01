@@ -1,4 +1,3 @@
-/*	$NetBSD: myproposal.h,v 1.12 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: myproposal.h,v 1.47 2015/07/10 06:21:53 markus Exp $ */
 
 /*
@@ -25,45 +24,98 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef WITH_OPENSSL
+#include <openssl/opensslv.h>
 
-#define KEX_COMMON_KEX		\
-	"curve25519-sha256@libssh.org," \
+/* conditional algorithm support */
+
+#ifdef OPENSSL_HAS_ECC
+#ifdef OPENSSL_HAS_NISTP521
+# define KEX_ECDH_METHODS \
 	"ecdh-sha2-nistp256," \
 	"ecdh-sha2-nistp384," \
-	"ecdh-sha2-nistp521," \
-	"diffie-hellman-group-exchange-sha256"
+	"ecdh-sha2-nistp521,"
+# define HOSTKEY_ECDSA_CERT_METHODS \
+	"ecdsa-sha2-nistp256-cert-v01@openssh.com," \
+	"ecdsa-sha2-nistp384-cert-v01@openssh.com," \
+	"ecdsa-sha2-nistp521-cert-v01@openssh.com,"
+# define HOSTKEY_ECDSA_METHODS \
+	"ecdsa-sha2-nistp256," \
+	"ecdsa-sha2-nistp384," \
+	"ecdsa-sha2-nistp521,"
+#else
+# define KEX_ECDH_METHODS \
+	"ecdh-sha2-nistp256," \
+	"ecdh-sha2-nistp384,"
+# define HOSTKEY_ECDSA_CERT_METHODS \
+	"ecdsa-sha2-nistp256-cert-v01@openssh.com," \
+	"ecdsa-sha2-nistp384-cert-v01@openssh.com,"
+# define HOSTKEY_ECDSA_METHODS \
+	"ecdsa-sha2-nistp256," \
+	"ecdsa-sha2-nistp384,"
+#endif
+#else
+# define KEX_ECDH_METHODS
+# define HOSTKEY_ECDSA_CERT_METHODS
+# define HOSTKEY_ECDSA_METHODS
+#endif
 
-#define KEX_SERVER_KEX KEX_COMMON_KEX "," \
-	"diffie-hellman-group14-sha1"
+#ifdef OPENSSL_HAVE_EVPGCM
+# define AESGCM_CIPHER_MODES \
+	",aes128-gcm@openssh.com,aes256-gcm@openssh.com"
+#else
+# define AESGCM_CIPHER_MODES
+#endif
 
-#define KEX_CLIENT_KEX KEX_COMMON_KEX "," \
+#ifdef HAVE_EVP_SHA256
+# define KEX_SHA256_METHODS \
+	"diffie-hellman-group-exchange-sha256,"
+#define	SHA2_HMAC_MODES \
+	"hmac-sha2-256," \
+	"hmac-sha2-512,"
+#else
+# define KEX_SHA256_METHODS
+# define SHA2_HMAC_MODES
+#endif
+
+#ifdef WITH_OPENSSL
+# ifdef HAVE_EVP_SHA256
+#  define KEX_CURVE25519_METHODS "curve25519-sha256@libssh.org,"
+# else
+#  define KEX_CURVE25519_METHODS ""
+# endif
+#define KEX_COMMON_KEX \
+	KEX_CURVE25519_METHODS \
+	KEX_ECDH_METHODS \
+	KEX_SHA256_METHODS
+
+#define KEX_SERVER_KEX KEX_COMMON_KEX \
+	"diffie-hellman-group14-sha1" \
+
+#define KEX_CLIENT_KEX KEX_COMMON_KEX \
 	"diffie-hellman-group-exchange-sha1," \
 	"diffie-hellman-group14-sha1"
 
 #define	KEX_DEFAULT_PK_ALG	\
-	"ecdsa-sha2-nistp256-cert-v01@openssh.com," \
-	"ecdsa-sha2-nistp384-cert-v01@openssh.com," \
-	"ecdsa-sha2-nistp521-cert-v01@openssh.com," \
+	HOSTKEY_ECDSA_CERT_METHODS \
 	"ssh-ed25519-cert-v01@openssh.com," \
 	"ssh-rsa-cert-v01@openssh.com," \
-	"ecdsa-sha2-nistp256," \
-	"ecdsa-sha2-nistp384," \
-	"ecdsa-sha2-nistp521," \
+	HOSTKEY_ECDSA_METHODS \
 	"ssh-ed25519," \
-	"ssh-rsa"
+	"ssh-rsa" \
 
-#define	KEX_SERVER_ENCRYPT \
+/* the actual algorithms */
+
+#define KEX_SERVER_ENCRYPT \
 	"chacha20-poly1305@openssh.com," \
-	"aes128-ctr,aes192-ctr,aes256-ctr," \
-	"aes128-gcm@openssh.com,aes256-gcm@openssh.com"
+	"aes128-ctr,aes192-ctr,aes256-ctr" \
+	AESGCM_CIPHER_MODES
 
 #define KEX_CLIENT_ENCRYPT KEX_SERVER_ENCRYPT "," \
 	"arcfour256,arcfour128," \
 	"aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc," \
 	"aes192-cbc,aes256-cbc,arcfour,rijndael-cbc@lysator.liu.se"
 
-#define	KEX_SERVER_MAC \
+#define KEX_SERVER_MAC \
 	"umac-64-etm@openssh.com," \
 	"umac-128-etm@openssh.com," \
 	"hmac-sha2-256-etm@openssh.com," \
@@ -114,19 +166,14 @@
 
 #endif /* WITH_OPENSSL */
 
-#define KEX_CLIENT_ENCRYPT_INCLUDE_NONE KEX_CLIENT_ENCRYPT \
-	",none"
-#define KEX_SERVER_ENCRYPT_INCLUDE_NONE KEX_SERVER_ENCRYPT \
-	",none"
-
 #define	KEX_DEFAULT_COMP	"none,zlib@openssh.com,zlib"
 #define	KEX_DEFAULT_LANG	""
 
 #define KEX_CLIENT \
 	KEX_CLIENT_KEX, \
 	KEX_DEFAULT_PK_ALG, \
-	KEX_CLIENT_ENCRYPT_INCLUDE_NONE, \
-	KEX_CLIENT_ENCRYPT_INCLUDE_NONE, \
+	KEX_CLIENT_ENCRYPT, \
+	KEX_CLIENT_ENCRYPT, \
 	KEX_CLIENT_MAC, \
 	KEX_CLIENT_MAC, \
 	KEX_DEFAULT_COMP, \
@@ -137,11 +184,12 @@
 #define KEX_SERVER \
 	KEX_SERVER_KEX, \
 	KEX_DEFAULT_PK_ALG, \
-	KEX_SERVER_ENCRYPT_INCLUDE_NONE, \
-	KEX_SERVER_ENCRYPT_INCLUDE_NONE, \
+	KEX_SERVER_ENCRYPT, \
+	KEX_SERVER_ENCRYPT, \
 	KEX_SERVER_MAC, \
 	KEX_SERVER_MAC, \
 	KEX_DEFAULT_COMP, \
 	KEX_DEFAULT_COMP, \
 	KEX_DEFAULT_LANG, \
 	KEX_DEFAULT_LANG
+

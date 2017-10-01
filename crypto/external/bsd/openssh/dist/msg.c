@@ -1,4 +1,3 @@
-/*	$NetBSD: msg.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: msg.c,v 1.16 2015/01/15 09:40:00 djm Exp $ */
 /*
  * Copyright (c) 2002 Markus Friedl.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: msg.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/uio.h>
 
@@ -34,7 +33,6 @@ __RCSID("$NetBSD: msg.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
 #include <string.h>
 #include <unistd.h>
 #include <stdarg.h>
-#include <time.h>
 
 #include "sshbuf.h"
 #include "ssherr.h"
@@ -57,7 +55,7 @@ ssh_msg_send(int fd, u_char type, struct sshbuf *m)
 		error("ssh_msg_send: write");
 		return (-1);
 	}
-	if (atomicio(vwrite, fd, __UNCONST(sshbuf_ptr(m)), mlen) != mlen) {
+	if (atomicio(vwrite, fd, (u_char *)sshbuf_ptr(m), mlen) != mlen) {
 		error("ssh_msg_send: write");
 		return (-1);
 	}

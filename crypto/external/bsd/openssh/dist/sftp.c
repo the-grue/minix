@@ -1,4 +1,3 @@
-/*	$NetBSD: sftp.c,v 1.16 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: sftp.c,v 1.171 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Copyright (c) 2001-2004 Damien Miller <djm@openbsd.org>
@@ -17,30 +16,48 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: sftp.c,v 1.16 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/param.h>	/* MIN MAX */
 #include <sys/types.h>
 #include <sys/ioctl.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
+#include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
+#ifdef HAVE_SYS_STATVFS_H
 #include <sys/statvfs.h>
+#endif
 
 #include <ctype.h>
 #include <errno.h>
-#include <glob.h>
-#include <histedit.h>
-#include <paths.h>
+
+#ifdef HAVE_PATHS_H
+# include <paths.h>
+#endif
+#ifdef HAVE_LIBGEN_H
 #include <libgen.h>
-#include <locale.h>
+#endif
+#ifdef HAVE_LOCALE_H
+# include <locale.h>
+#endif
+#ifdef USE_LIBEDIT
+#include <histedit.h>
+#else
+typedef void EditLine;
+#endif
+#include <limits.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <limits.h>
-#include <util.h>
 #include <stdarg.h>
+
+#ifdef HAVE_UTIL_H
+# include <util.h>
+#endif
 
 #include "xmalloc.h"
 #include "log.h"
@@ -52,10 +69,9 @@ __RCSID("$NetBSD: sftp.c,v 1.16 2015/08/21 08:20:59 christos Exp $");
 #include "sshbuf.h"
 #include "sftp-common.h"
 #include "sftp-client.h"
-#include "fmt_scaled.h"
 
 #define DEFAULT_COPY_BUFLEN	32768	/* Size of buffer for up/download */
-#define DEFAULT_NUM_REQUESTS	256	/* # concurrent outstanding requests */
+#define DEFAULT_NUM_REQUESTS	64	/* # concurrent outstanding requests */
 
 /* File to read commands from */
 FILE* infile;
@@ -98,6 +114,8 @@ struct complete_ctx {
 
 int remote_glob(struct sftp_conn *, const char *, int,
     int (*)(const char *, int), glob_t *); /* proto for sftp-glob.c */
+
+extern char *__progname;
 
 /* Separators for interactive commands */
 #define WHITESPACE " \t\r\n"
@@ -197,10 +215,10 @@ static const struct CMD cmds[] = {
 	{ NULL,		-1,		-1	}
 };
 
-int interactive_loop(struct sftp_conn *, const char *, const char *);
+int interactive_loop(struct sftp_conn *, char *file1, char *file2);
 
 /* ARGSUSED */
-__dead static void
+static void
 killchild(int signo)
 {
 	if (sshpid > 1) {
@@ -265,7 +283,7 @@ static void
 local_do_shell(const char *args)
 {
 	int status;
-	const char *shell;
+	char *shell;
 	pid_t pid;
 
 	if (!*args)
@@ -669,7 +687,7 @@ process_put(struct sftp_conn *conn, char *src, char *dst, char *pwd,
 
 	memset(&g, 0, sizeof(g));
 	debug3("Looking up %s", src);
-	if (glob(src, GLOB_NOCHECK | GLOB_LIMIT | GLOB_MARK, NULL, &g)) {
+	if (glob(src, GLOB_NOCHECK | GLOB_MARK, NULL, &g)) {
 		error("File \"%s\" not found.", src);
 		err = -1;
 		goto out;
@@ -732,8 +750,6 @@ process_put(struct sftp_conn *conn, char *src, char *dst, char *pwd,
 			    fflag || global_fflag) == -1)
 				err = -1;
 		}
-		free(abs_dst);
-		abs_dst = NULL;
 	}
 
 out:
@@ -746,8 +762,8 @@ out:
 static int
 sdirent_comp(const void *aa, const void *bb)
 {
-	const SFTP_DIRENT *a = *(const SFTP_DIRENT * const *)aa;
-	const SFTP_DIRENT *b = *(const SFTP_DIRENT * const *)bb;
+	SFTP_DIRENT *a = *(SFTP_DIRENT **)aa;
+	SFTP_DIRENT *b = *(SFTP_DIRENT **)bb;
 	int rmul = sort_flag & LS_REVERSE_SORT ? -1 : 1;
 
 #define NCMP(a,b) (a == b ? 0 : (a < b ? 1 : -1))
@@ -759,8 +775,6 @@ sdirent_comp(const void *aa, const void *bb)
 		return (rmul * NCMP(a->a.size, b->a.size));
 
 	fatal("Unknown ls sort type");
-	/*NOTREACHED*/
-	return 0;
 }
 
 /* sftp ls.1 replacement for directories */
@@ -858,11 +872,6 @@ do_globbed_ls(struct sftp_conn *conn, char *path, char *strip_path,
 	int err, r;
 	struct winsize ws;
 	u_int i, c = 1, colspace = 0, columns = 1, m = 0, width = 80;
-	struct stat *stp;
-#ifndef GLOB_KEEPSTAT
-	struct stat st;
-#define GLOB_KEEPSTAT	0
-#endif
 
 	memset(&g, 0, sizeof(g));
 
@@ -887,13 +896,8 @@ do_globbed_ls(struct sftp_conn *conn, char *path, char *strip_path,
 	 * If the glob returns a single match and it is a directory,
 	 * then just list its contents.
 	 */
-	if (g.gl_matchc == 1 &&
-#if GLOB_KEEPSTAT != 0
-	    (stp = g.gl_statv[0]) != NULL &&
-#else
-	    lstat(g.gl_pathv[0], stp = &st) != -1 &&
-#endif
-	    S_ISDIR(stp->st_mode)) {
+	if (g.gl_matchc == 1 && g.gl_statv[0] != NULL &&
+	    S_ISDIR(g.gl_statv[0]->st_mode)) {
 		err = do_ls_dir(conn, g.gl_pathv[0], strip_path, lflag);
 		globfree(&g);
 		return err;
@@ -915,17 +919,12 @@ do_globbed_ls(struct sftp_conn *conn, char *path, char *strip_path,
 	for (i = 0; g.gl_pathv[i] && !interrupted; i++) {
 		fname = path_strip(g.gl_pathv[i], strip_path);
 		if (lflag & LS_LONG_VIEW) {
-#if GLOB_KEEPSTAT != 0
-			stp = g.gl_statv[i];
-#else
-			if (lstat(g.gl_pathv[i], stp = &st) == -1)
-				stp = NULL;
-#endif
-			if (stp == NULL) {
+			if (g.gl_statv[i] == NULL) {
 				error("no stat information for %s", fname);
 				continue;
 			}
-			lname = ls_file(fname, stp, 1, (lflag & LS_SI_UNITS));
+			lname = ls_file(fname, g.gl_statv[i], 1,
+			    (lflag & LS_SI_UNITS));
 			printf("%s\n", lname);
 			free(lname);
 		} else {
@@ -1408,12 +1407,6 @@ parse_dispatch_command(struct sftp_conn *conn, const char *cmd, char **pwd,
 	int err = 0;
 	glob_t g;
 
-	pflag = 0;	/* XXX gcc */
-	lflag = 0;	/* XXX gcc */
-	iflag = 0;	/* XXX gcc */
-	hflag = 0;	/* XXX gcc */
-	n_arg = 0;	/* XXX gcc */
-
 	path1 = path2 = NULL;
 	cmdnum = parse_args(&cmd, &ignore_errors, &aflag, &fflag, &hflag,
 	    &iflag, &lflag, &pflag, &rflag, &sflag, &n_arg, &path1, &path2);
@@ -1652,7 +1645,8 @@ parse_dispatch_command(struct sftp_conn *conn, const char *cmd, char **pwd,
 	return (0);
 }
 
-static const char *
+#ifdef USE_LIBEDIT
+static char *
 prompt(EditLine *el)
 {
 	return ("sftp> ");
@@ -1664,7 +1658,7 @@ complete_display(char **list, u_int len)
 {
 	u_int y, m = 0, width = 80, columns = 1, colspace = 0, llen;
 	struct winsize ws;
-	const char *tmp;
+	char *tmp;
 
 	/* Count entries for sort and find longest */
 	for (y = 0; list[y]; y++)
@@ -1845,9 +1839,9 @@ complete_match(EditLine *el, struct sftp_conn *conn, char *remote_path,
 	if (remote != LOCAL) {
 		tmp = make_absolute(tmp, remote_path);
 		remote_glob(conn, tmp, GLOB_DOOFFS|GLOB_MARK, NULL, &g);
-		glob(tmp, GLOB_LIMIT|GLOB_DOOFFS|GLOB_MARK, NULL, &g);
-	}
-	
+	} else
+		glob(tmp, GLOB_DOOFFS|GLOB_MARK, NULL, &g);
+
 	/* Determine length of pwd so we can trim completion display */
 	for (hadglob = tmplen = pwdlen = 0; tmp[tmplen] != 0; tmplen++) {
 		/* Terminate counting on first unescaped glob metacharacter */
@@ -1959,7 +1953,7 @@ complete(EditLine *el, int ch)
 	struct complete_ctx *complete_ctx;
 
 	lf = el_line(el);
-	if (el_get(el, EL_CLIENTDATA, &complete_ctx) != 0)
+	if (el_get(el, EL_CLIENTDATA, (void**)&complete_ctx) != 0)
 		fatal("%s: el_get failed", __func__);
 
 	/* Figure out which argument the cursor points to */
@@ -2011,15 +2005,17 @@ complete(EditLine *el, int ch)
 	free(line);
 	return ret;
 }
+#endif /* USE_LIBEDIT */
 
 int
-interactive_loop(struct sftp_conn *conn, const char *file1, const char *file2)
+interactive_loop(struct sftp_conn *conn, char *file1, char *file2)
 {
 	char *remote_path;
 	char *dir = NULL;
 	char cmd[2048];
 	int err, interactive;
 	EditLine *el = NULL;
+#ifdef USE_LIBEDIT
 	History *hl = NULL;
 	HistEvent hev;
 	extern char *__progname;
@@ -2054,6 +2050,7 @@ interactive_loop(struct sftp_conn *conn, const char *file1, const char *file2)
 		/* make ^w match ksh behaviour */
 		el_set(el, EL_BIND, "^w", "ed-delete-prev-word", NULL);
 	}
+#endif /* USE_LIBEDIT */
 
 	remote_path = do_realpath(conn, ".");
 	if (remote_path == NULL)
@@ -2097,8 +2094,6 @@ interactive_loop(struct sftp_conn *conn, const char *file1, const char *file2)
 	err = 0;
 	for (;;) {
 		char *cp;
-		const char *line;
-		int count = 0;
 
 		signal(SIGINT, SIG_IGN);
 
@@ -2117,16 +2112,21 @@ interactive_loop(struct sftp_conn *conn, const char *file1, const char *file2)
 					printf("\n");
 			}
 		} else {
+#ifdef USE_LIBEDIT
+			const char *line;
+			int count = 0;
+
 			if ((line = el_gets(el, &count)) == NULL ||
 			    count <= 0) {
 				printf("\n");
-				break;
+ 				break;
 			}
 			history(hl, &hev, H_ENTER, line);
 			if (strlcpy(cmd, line, sizeof(cmd)) >= sizeof(cmd)) {
 				fprintf(stderr, "Error: input line too long\n");
 				continue;
 			}
+#endif /* USE_LIBEDIT */
 		}
 
 		cp = strrchr(cmd, '\n');
@@ -2145,24 +2145,37 @@ interactive_loop(struct sftp_conn *conn, const char *file1, const char *file2)
 	free(remote_path);
 	free(conn);
 
+#ifdef USE_LIBEDIT
 	if (el != NULL)
 		el_end(el);
+#endif /* USE_LIBEDIT */
 
 	/* err == 1 signifies normal "quit" exit */
 	return (err >= 0 ? 0 : -1);
 }
 
 static void
-connect_to_server(const char *path, char **args, int *in, int *out)
+connect_to_server(char *path, char **args, int *in, int *out)
 {
 	int c_in, c_out;
 
+#ifdef USE_PIPES
+	int pin[2], pout[2];
+
+	if ((pipe(pin) == -1) || (pipe(pout) == -1))
+		fatal("pipe: %s", strerror(errno));
+	*in = pin[0];
+	*out = pout[1];
+	c_in = pout[0];
+	c_out = pin[1];
+#else /* USE_PIPES */
 	int inout[2];
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, inout) == -1)
 		fatal("socketpair: %s", strerror(errno));
 	*in = *out = inout[0];
 	c_in = c_out = inout[1];
+#endif /* USE_PIPES */
 
 	if ((sshpid = fork()) == -1)
 		fatal("fork: %s", strerror(errno));
@@ -2198,7 +2211,7 @@ connect_to_server(const char *path, char **args, int *in, int *out)
 	close(c_out);
 }
 
-__dead static void
+static void
 usage(void)
 {
 	extern char *__progname;
@@ -2223,8 +2236,8 @@ main(int argc, char **argv)
 	int in, out, ch, err;
 	char *host = NULL, *userhost, *cp, *file2 = NULL;
 	int debug_level = 0, sshver = 2;
-	const char *file1 = NULL, *sftp_server = NULL;
-	const char *ssh_program = _PATH_SSH_PROGRAM, *sftp_direct = NULL;
+	char *file1 = NULL, *sftp_server = NULL;
+	char *ssh_program = _PATH_SSH_PROGRAM, *sftp_direct = NULL;
 	const char *errstr;
 	LogLevel ll = SYSLOG_LEVEL_INFO;
 	arglist args;
@@ -2239,6 +2252,7 @@ main(int argc, char **argv)
 	sanitise_stdfd();
 	setlocale(LC_CTYPE, "");
 
+	__progname = ssh_get_progname(argv[0]);
 	memset(&args, '\0', sizeof(args));
 	args.list = NULL;
 	addargs(&args, "%s", ssh_program);
@@ -2416,6 +2430,11 @@ main(int argc, char **argv)
 	}
 
 	err = interactive_loop(conn, file1, file2);
+
+#if !defined(USE_PIPES)
+	shutdown(in, SHUT_RDWR);
+	shutdown(out, SHUT_RDWR);
+#endif
 
 	close(in);
 	close(out);

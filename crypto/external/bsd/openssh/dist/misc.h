@@ -1,4 +1,3 @@
-/*	$NetBSD: misc.h,v 1.9 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: misc.h,v 1.54 2014/07/15 15:54:14 millert Exp $ */
 
 /*
@@ -50,22 +49,16 @@ char	*cleanhostname(char *);
 char	*colon(char *);
 long	 convtime(const char *);
 char	*tilde_expand_filename(const char *, uid_t);
-char	*percent_expand(const char *, ...)
-#if __GNUC_PREREQ__(4, 0)
-    __attribute__((__sentinel__))
-#endif
-    ;
+char	*percent_expand(const char *, ...) __attribute__((__sentinel__));
 char	*tohex(const void *, size_t);
 void	 sanitise_stdfd(void);
-struct timeval;
 void	 ms_subtract_diff(struct timeval *, int *);
 void	 ms_to_timeval(struct timeval *, int);
 time_t	 monotime(void);
 void	 lowercase(char *s);
 int	 unix_listener(const char *, int, int);
 
-int	bcrypt_pbkdf(const char *, size_t, const u_int8_t *, size_t,
-    u_int8_t *, size_t, unsigned int);
+void	 sock_set_v6only(int);
 
 struct passwd *pwcopy(struct passwd *);
 const char *ssh_gai_strerror(int);
@@ -76,9 +69,9 @@ struct arglist {
 	u_int   num;
 	u_int   nalloc;
 };
-void	 addargs(arglist *, const char *, ...)
+void	 addargs(arglist *, char *, ...)
 	     __attribute__((format(printf, 2, 3)));
-void	 replacearg(arglist *, u_int, const char *, ...)
+void	 replacearg(arglist *, u_int, char *, ...)
 	     __attribute__((format(printf, 3, 4)));
 void	 freeargs(arglist *);
 

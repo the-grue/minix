@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-keysign.c,v 1.10 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: ssh-keysign.c,v 1.49 2015/07/03 03:56:25 djm Exp $ */
 /*
  * Copyright (c) 2002 Markus Friedl.  All rights reserved.
@@ -25,18 +24,22 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-keysign.c,v 1.10 2015/08/13 10:33:21 christos Exp $");
-#include <sys/types.h>
-
-#include <openssl/evp.h>
-#include <openssl/rsa.h>
 
 #include <fcntl.h>
+#ifdef HAVE_PATHS_H
 #include <paths.h>
+#endif
 #include <pwd.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#ifdef WITH_OPENSSL
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/rsa.h>
+#endif
 
 #include "xmalloc.h"
 #include "log.h"
@@ -54,8 +57,12 @@ __RCSID("$NetBSD: ssh-keysign.c,v 1.10 2015/08/13 10:33:21 christos Exp $");
 #include "sshkey.h"
 #include "ssherr.h"
 
+struct ssh *active_state = NULL; /* XXX needed for linking */
+
 /* XXX readconf.c needs these */
 uid_t original_real_uid;
+
+extern char *__progname;
 
 static int
 valid_request(struct passwd *pw, char *host, struct sshkey **ret,
@@ -168,8 +175,9 @@ main(int argc, char **argv)
 	u_char *signature, *data, rver;
 	char *host, *fp;
 	size_t slen, dlen;
-
-	key = NULL;	/* XXX gcc */
+#ifdef WITH_OPENSSL
+	u_int32_t rnd[256];
+#endif
 
 	/* Ensure that stdin and stdout are connected */
 	if ((fd = open(_PATH_DEVNULL, O_RDWR)) < 2)
@@ -192,6 +200,8 @@ main(int argc, char **argv)
 
 	permanently_set_uid(pw);
 
+	seed_rng();
+
 #ifdef DEBUG_SSH_KEYSIGN
 	log_init("ssh-keysign", SYSLOG_LEVEL_DEBUG3, SYSLOG_FACILITY_AUTH, 0);
 #endif
@@ -211,7 +221,11 @@ main(int argc, char **argv)
 	if (found == 0)
 		fatal("could not open any host key");
 
+#ifdef WITH_OPENSSL
 	OpenSSL_add_all_algorithms();
+	arc4random_buf(rnd, sizeof(rnd));
+	RAND_seed(rnd, sizeof(rnd));
+#endif
 
 	found = 0;
 	for (i = 0; i < NUM_KEYTYPES; i++) {

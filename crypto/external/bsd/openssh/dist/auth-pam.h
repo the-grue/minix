@@ -1,5 +1,4 @@
-/*	$NetBSD: auth-pam.h,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
-/* Id: auth-pam.h,v 1.27 2004/09/11 12:17:26 dtucker Exp  */
+/* $Id: auth-pam.h,v 1.27 2004/09/11 12:17:26 dtucker Exp $ */
 
 /*
  * Copyright (c) 2000 Damien Miller.  All rights reserved.
@@ -29,7 +28,7 @@
 #ifdef USE_PAM
 
 #if !defined(SSHD_PAM_SERVICE)
-# define SSHD_PAM_SERVICE		"sshd"
+# define SSHD_PAM_SERVICE		__progname
 #endif
 
 void start_pam(Authctxt *);

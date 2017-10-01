@@ -1,4 +1,3 @@
-/*	$NetBSD: authfd.c,v 1.10 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: authfd.c,v 1.98 2015/07/03 03:43:18 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -37,7 +36,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: authfd.c,v 1.10 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/socket.h>
@@ -45,6 +44,7 @@ __RCSID("$NetBSD: authfd.c,v 1.10 2015/08/13 10:33:21 christos Exp $");
 #include <fcntl.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -134,7 +134,7 @@ ssh_request_reply(int sock, struct sshbuf *request, struct sshbuf *reply)
 
 	/* Send the length and then the packet to the agent. */
 	if (atomicio(vwrite, sock, buf, 4) != 4 ||
-	    atomicio(vwrite, sock, __UNCONST(sshbuf_ptr(request)),
+	    atomicio(vwrite, sock, (u_char *)sshbuf_ptr(request),
 	    sshbuf_len(request)) != sshbuf_len(request))
 		return SSH_ERR_AGENT_COMMUNICATION;
 	/*

@@ -1,4 +1,3 @@
-/*	$NetBSD: cipher.c,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: cipher.c,v 1.100 2015/01/14 10:29:45 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -37,7 +36,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: cipher.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 
 #include <string.h>
@@ -50,6 +49,8 @@ __RCSID("$NetBSD: cipher.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
 #include "ssherr.h"
 #include "digest.h"
 
+#include "openbsd-compat/openssl-compat.h"
+
 #ifdef WITH_SSH1
 extern const EVP_CIPHER *evp_ssh1_bf(void);
 extern const EVP_CIPHER *evp_ssh1_3des(void);
@@ -57,7 +58,7 @@ extern int ssh1_3des_iv(EVP_CIPHER_CTX *, int, u_char *, int);
 #endif
 
 struct sshcipher {
-	const char	*name;
+	char	*name;
 	int	number;		/* for ssh1 only */
 	u_int	block_size;
 	u_int	key_len;
@@ -81,7 +82,7 @@ static const struct sshcipher ciphers[] = {
 	{ "des",	SSH_CIPHER_DES, 8, 8, 0, 0, 0, 1, EVP_des_cbc },
 	{ "3des",	SSH_CIPHER_3DES, 8, 16, 0, 0, 0, 1, evp_ssh1_3des },
 	{ "blowfish",	SSH_CIPHER_BLOWFISH, 8, 32, 0, 0, 0, 1, evp_ssh1_bf },
-#endif
+#endif /* WITH_SSH1 */
 #ifdef WITH_OPENSSL
 	{ "none",	SSH_CIPHER_NONE, 8, 0, 0, 0, 0, 0, EVP_enc_null },
 	{ "3des-cbc",	SSH_CIPHER_SSH2, 8, 24, 0, 0, 0, 1, EVP_des_ede3_cbc },
@@ -97,25 +98,21 @@ static const struct sshcipher ciphers[] = {
 	{ "aes256-cbc",	SSH_CIPHER_SSH2, 16, 32, 0, 0, 0, 1, EVP_aes_256_cbc },
 	{ "rijndael-cbc@lysator.liu.se",
 			SSH_CIPHER_SSH2, 16, 32, 0, 0, 0, 1, EVP_aes_256_cbc },
-#ifdef AES_CTR_MT
-	{ "aes128-ctr",	SSH_CIPHER_SSH2, 16, 16, 0, 0, 0, 0, evp_aes_ctr_mt },
-	{ "aes192-ctr",	SSH_CIPHER_SSH2, 16, 24, 0, 0, 0, 0, evp_aes_ctr_mt },
-	{ "aes256-ctr",	SSH_CIPHER_SSH2, 16, 32, 0, 0, 0, 0, evp_aes_ctr_mt },
-#else
 	{ "aes128-ctr",	SSH_CIPHER_SSH2, 16, 16, 0, 0, 0, 0, EVP_aes_128_ctr },
 	{ "aes192-ctr",	SSH_CIPHER_SSH2, 16, 24, 0, 0, 0, 0, EVP_aes_192_ctr },
 	{ "aes256-ctr",	SSH_CIPHER_SSH2, 16, 32, 0, 0, 0, 0, EVP_aes_256_ctr },
-#endif
+# ifdef OPENSSL_HAVE_EVPGCM
 	{ "aes128-gcm@openssh.com",
 			SSH_CIPHER_SSH2, 16, 16, 12, 16, 0, 0, EVP_aes_128_gcm },
 	{ "aes256-gcm@openssh.com",
 			SSH_CIPHER_SSH2, 16, 32, 12, 16, 0, 0, EVP_aes_256_gcm },
-#else
+# endif /* OPENSSL_HAVE_EVPGCM */
+#else /* WITH_OPENSSL */
 	{ "aes128-ctr",	SSH_CIPHER_SSH2, 16, 16, 0, 0, 0, CFLAG_AESCTR, NULL },
 	{ "aes192-ctr",	SSH_CIPHER_SSH2, 16, 24, 0, 0, 0, CFLAG_AESCTR, NULL },
 	{ "aes256-ctr",	SSH_CIPHER_SSH2, 16, 32, 0, 0, 0, CFLAG_AESCTR, NULL },
 	{ "none",	SSH_CIPHER_NONE, 8, 0, 0, 0, 0, CFLAG_NONE, NULL },
-#endif
+#endif /* WITH_OPENSSL */
 	{ "chacha20-poly1305@openssh.com",
 			SSH_CIPHER_SSH2, 8, 64, 0, 16, 0, CFLAG_CHACHAPOLY, NULL },
 
@@ -247,8 +244,7 @@ ciphers_valid(const char *names)
 	for ((p = strsep(&cp, CIPHER_SEP)); p && *p != '\0';
 	    (p = strsep(&cp, CIPHER_SEP))) {
 		c = cipher_by_name(p);
-		if (c == NULL || (c->number != SSH_CIPHER_SSH2 && 
-c->number != SSH_CIPHER_NONE)) {
+		if (c == NULL || c->number != SSH_CIPHER_SSH2) {
 			free(cipher_list);
 			return 0;
 		}
@@ -274,7 +270,7 @@ cipher_number(const char *name)
 	return -1;
 }
 
-const char *
+char *
 cipher_name(int id)
 {
 	const struct sshcipher *c = cipher_by_number(id);
@@ -331,14 +327,14 @@ cipher_init(struct sshcipher_ctx *cc, const struct sshcipher *cipher,
 #else
 	type = (*cipher->evptype)();
 	EVP_CIPHER_CTX_init(&cc->evp);
-	if (EVP_CipherInit(&cc->evp, type, NULL, __UNCONST(iv),
+	if (EVP_CipherInit(&cc->evp, type, NULL, (u_char *)iv,
 	    (do_encrypt == CIPHER_ENCRYPT)) == 0) {
 		ret = SSH_ERR_LIBCRYPTO_ERROR;
 		goto bad;
 	}
 	if (cipher_authlen(cipher) &&
 	    !EVP_CIPHER_CTX_ctrl(&cc->evp, EVP_CTRL_GCM_SET_IV_FIXED,
-	    -1, __UNCONST(iv))) {
+	    -1, (u_char *)iv)) {
 		ret = SSH_ERR_LIBCRYPTO_ERROR;
 		goto bad;
 	}
@@ -349,7 +345,7 @@ cipher_init(struct sshcipher_ctx *cc, const struct sshcipher *cipher,
 			goto bad;
 		}
 	}
-	if (EVP_CipherInit(&cc->evp, NULL, __UNCONST(key), NULL, -1) == 0) {
+	if (EVP_CipherInit(&cc->evp, NULL, (u_char *)key, NULL, -1) == 0) {
 		ret = SSH_ERR_LIBCRYPTO_ERROR;
 		goto bad;
 	}
@@ -421,18 +417,18 @@ cipher_crypt(struct sshcipher_ctx *cc, u_int seqnr, u_char *dest,
 		/* set tag on decyption */
 		if (!cc->encrypt &&
 		    !EVP_CIPHER_CTX_ctrl(&cc->evp, EVP_CTRL_GCM_SET_TAG,
-		    authlen, __UNCONST(src + aadlen + len)))
+		    authlen, (u_char *)src + aadlen + len))
 			return SSH_ERR_LIBCRYPTO_ERROR;
 	}
 	if (aadlen) {
 		if (authlen &&
-		    EVP_Cipher(&cc->evp, NULL, (const u_char *)src, aadlen) < 0)
+		    EVP_Cipher(&cc->evp, NULL, (u_char *)src, aadlen) < 0)
 			return SSH_ERR_LIBCRYPTO_ERROR;
 		memcpy(dest, src, aadlen);
 	}
 	if (len % cc->cipher->block_size)
 		return SSH_ERR_INVALID_ARGUMENT;
-	if (EVP_Cipher(&cc->evp, dest + aadlen, (const u_char *)src + aadlen,
+	if (EVP_Cipher(&cc->evp, dest + aadlen, (u_char *)src + aadlen,
 	    len) < 0)
 		return SSH_ERR_LIBCRYPTO_ERROR;
 	if (authlen) {
@@ -549,7 +545,6 @@ cipher_get_keyiv(struct sshcipher_ctx *cc, u_char *iv, u_int len)
 
 	switch (c->number) {
 #ifdef WITH_OPENSSL
-	case SSH_CIPHER_NONE:
 	case SSH_CIPHER_SSH2:
 	case SSH_CIPHER_DES:
 	case SSH_CIPHER_BLOWFISH:
@@ -560,6 +555,11 @@ cipher_get_keyiv(struct sshcipher_ctx *cc, u_char *iv, u_int len)
 			return SSH_ERR_LIBCRYPTO_ERROR;
 		if ((u_int)evplen != len)
 			return SSH_ERR_INVALID_ARGUMENT;
+#ifndef OPENSSL_HAVE_EVPCTR
+		if (c->evptype == evp_aes_128_ctr)
+			ssh_aes_ctr_iv(&cc->evp, 0, iv, len);
+		else
+#endif
 		if (cipher_authlen(c)) {
 			if (!EVP_CIPHER_CTX_ctrl(&cc->evp, EVP_CTRL_GCM_IV_GEN,
 			   len, iv))
@@ -593,7 +593,6 @@ cipher_set_keyiv(struct sshcipher_ctx *cc, const u_char *iv)
 
 	switch (c->number) {
 #ifdef WITH_OPENSSL
-	case SSH_CIPHER_NONE:
 	case SSH_CIPHER_SSH2:
 	case SSH_CIPHER_DES:
 	case SSH_CIPHER_BLOWFISH:
@@ -603,7 +602,7 @@ cipher_set_keyiv(struct sshcipher_ctx *cc, const u_char *iv)
 		if (cipher_authlen(c)) {
 			/* XXX iv arg is const, but EVP_CIPHER_CTX_ctrl isn't */
 			if (!EVP_CIPHER_CTX_ctrl(&cc->evp,
-			    EVP_CTRL_GCM_SET_IV_FIXED, -1, __UNCONST(iv)))
+			    EVP_CTRL_GCM_SET_IV_FIXED, -1, (void *)iv))
 				return SSH_ERR_LIBCRYPTO_ERROR;
 		} else
 			memcpy(cc->evp.iv, iv, evplen);
@@ -611,7 +610,7 @@ cipher_set_keyiv(struct sshcipher_ctx *cc, const u_char *iv)
 #endif
 #ifdef WITH_SSH1
 	case SSH_CIPHER_3DES:
-		return ssh1_3des_iv(&cc->evp, 1, __UNCONST(iv), 24);
+		return ssh1_3des_iv(&cc->evp, 1, (u_char *)iv, 24);
 #endif
 	default:
 		return SSH_ERR_INVALID_ARGUMENT;

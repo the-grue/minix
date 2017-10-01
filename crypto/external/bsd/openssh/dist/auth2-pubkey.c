@@ -1,4 +1,3 @@
-/*	$NetBSD: auth2-pubkey.c,v 1.13 2015/07/06 15:09:17 christos Exp $	*/
 /* $OpenBSD: auth2-pubkey.c,v 1.53 2015/06/15 18:44:22 jsing Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -25,14 +24,16 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth2-pubkey.c,v 1.13 2015/07/06 15:09:17 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
-#include <paths.h>
+#ifdef HAVE_PATHS_H
+# include <paths.h>
+#endif
 #include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
@@ -64,12 +65,6 @@ __RCSID("$NetBSD: auth2-pubkey.c,v 1.13 2015/07/06 15:09:17 christos Exp $");
 #include "monitor_wrap.h"
 #include "authfile.h"
 #include "match.h"
-#include "digest.h"
-
-#ifdef WITH_LDAP_PUBKEY
-#include "ldapauth.h"
-#endif
-
 #include "ssherr.h"
 #include "channels.h" /* XXX for session.h */
 #include "session.h" /* XXX for child_set_env(); refactor? */
@@ -474,19 +469,16 @@ subprocess(const char *tag, struct passwd *pw, const char *command,
 			error("%s: dup2: %s", tag, strerror(errno));
 			_exit(1);
 		}
-		if (closefrom(STDERR_FILENO + 1) == -1) {
-			error("closefrom: %s", strerror(errno));
-			_exit(1);
-		}
+		closefrom(STDERR_FILENO + 1);
 
 		/* Don't use permanently_set_uid() here to avoid fatal() */
-		if (setgid(pw->pw_gid) == -1) {
-			error("setgid %u: %s", (u_int)pw->pw_gid,
+		if (setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) != 0) {
+			error("%s: setresgid %u: %s", tag, (u_int)pw->pw_gid,
 			    strerror(errno));
 			_exit(1);
 		}
-		if (setuid(pw->pw_uid) == -1) {
-			error("setuid %u: %s", (u_int)pw->pw_uid,
+		if (setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid) != 0) {
+			error("%s: setresuid %u: %s", tag, (u_int)pw->pw_uid,
 			    strerror(errno));
 			_exit(1);
 		}
@@ -730,83 +722,6 @@ check_authkeys_file(FILE *f, char *file, Key* key, struct passwd *pw)
 	u_long linenum = 0;
 	Key *found;
 	char *fp;
-#ifdef WITH_LDAP_PUBKEY
-	ldap_key_t * k;
-	unsigned int i = 0;
-#endif
-
-#ifdef WITH_LDAP_PUBKEY
-	found_key = 0;
-	/* allocate a new key type */
-	found = key_new(key->type);
- 
-	/* first check if the options is enabled, then try.. */
-	if (options.lpk.on) {
-	    debug("[LDAP] trying LDAP first uid=%s",pw->pw_name);
-	    if (ldap_ismember(&options.lpk, pw->pw_name) > 0) {
-		if ((k = ldap_getuserkey(&options.lpk, pw->pw_name)) != NULL) {
-		    /* Skip leading whitespace, empty and comment lines. */
-		    for (i = 0 ; i < k->num ; i++) {
-			/* dont forget if multiple keys to reset options */
-			char *cp, *xoptions = NULL;
-
-			for (cp = (char *)k->keys[i]->bv_val; *cp == ' ' || *cp == '\t'; cp++)
-			    ;
-			if (!*cp || *cp == '\n' || *cp == '#')
-			    continue;
-
-			if (key_read(found, &cp) != 1) {
-			    /* no key?  check if there are options for this key */
-			    int quoted = 0;
-			    debug2("[LDAP] user_key_allowed: check options: '%s'", cp);
-			    xoptions = cp;
-			    for (; *cp && (quoted || (*cp != ' ' && *cp != '\t')); cp++) {
-				if (*cp == '\\' && cp[1] == '"')
-				    cp++;	/* Skip both */
-				else if (*cp == '"')
-				    quoted = !quoted;
-			    }
-			    /* Skip remaining whitespace. */
-			    for (; *cp == ' ' || *cp == '\t'; cp++)
-				;
-			    if (key_read(found, &cp) != 1) {
-				debug2("[LDAP] user_key_allowed: advance: '%s'", cp);
-				/* still no key?  advance to next line*/
-				continue;
-			    }
-			}
-
-			if (key_equal(found, key) &&
-				auth_parse_options(pw, xoptions, file, linenum) == 1) {
-			    found_key = 1;
-			    debug("[LDAP] matching key found");
-			    fp = sshkey_fingerprint(found, SSH_FP_HASH_DEFAULT, SSH_FP_HEX);
-			    verbose("[LDAP] Found matching %s key: %s", key_type(found), fp);
-
-			    /* restoring memory */
-			    ldap_keys_free(k);
-			    free(fp);
-			    restore_uid();
-			    key_free(found);
-			    return found_key;
-			    break;
-			}
-		    }/* end of LDAP for() */
-		} else {
-		    logit("[LDAP] no keys found for '%s'!", pw->pw_name);
-		}
-	    } else {
-		logit("[LDAP] '%s' is not in '%s'", pw->pw_name, options.lpk.sgroup);
-	    }
-	}
-#endif
-	debug("trying public key file %s", file);
-	f = auth_openkeyfile(file, pw, options.strict_modes);
-
-	if (!f) {
-		restore_uid();
-		return 0;
-	}
 
 	found_key = 0;
 

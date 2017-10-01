@@ -47,31 +47,16 @@
 
 /* Based on $FreeBSD: src/crypto/openssh/auth2-pam-freebsd.c,v 1.11 2003/03/31 13:48:18 des Exp $ */
 #include "includes.h"
-/*
- * NetBSD local changes
- */
-__RCSID("$NetBSD: auth-pam.c,v 1.7 2015/07/03 00:59:59 christos Exp $");
-#undef USE_POSIX_THREADS /* Not yet */
-#define HAVE_SECURITY_PAM_APPL_H
-#define HAVE_PAM_GETENVLIST
-#define HAVE_PAM_PUTENV
-#define sshpam_const	const	/* LinuxPAM, OpenPAM */
-#define PAM_MSG_MEMBER(msg, n, member) ((*(msg))[(n)].member)
-#define mysig_t sig_t
-void sshpam_password_change_required(int);
-/* end NetBSD local changes */
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <sys/socket.h>
 
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
-#include <pwd.h>
 
 #ifdef USE_PAM
 #if defined(HAVE_SECURITY_PAM_APPL_H)
@@ -80,7 +65,6 @@ void sshpam_password_change_required(int);
 #include <pam/pam_appl.h>
 #endif
 
-#ifndef __NetBSD__
 /* OpenGroup RFC86.0 and XSSO specify no "const" on arguments */
 #ifdef PAM_SUN_CODEBASE
 # define sshpam_const		/* Solaris, HP-UX, AIX */
@@ -93,7 +77,6 @@ void sshpam_password_change_required(int);
 # define PAM_MSG_MEMBER(msg, n, member) ((*(msg))[(n)].member)
 #else
 # define PAM_MSG_MEMBER(msg, n, member) ((msg)[(n)]->member)
-#endif
 #endif
 
 #include "xmalloc.h"
@@ -184,7 +167,7 @@ sshpam_sigchld_handler(int sig)
 }
 
 /* ARGSUSED */
-__dead static void
+static void
 pthread_exit(void *value)
 {
 	_exit(0);
@@ -429,8 +412,7 @@ sshpam_thread_conv(int n, sshpam_const struct pam_message **msg,
 
  fail:
 	for(i = 0; i < n; i++) {
-		if (reply[i].resp != NULL)
-			free(reply[i].resp);
+		free(reply[i].resp);
 	}
 	free(reply);
 	buffer_free(&buffer);
@@ -456,8 +438,10 @@ sshpam_thread(void *ctxtp)
 	const char **ptr_pam_user = &pam_user;
 	char *tz = getenv("TZ");
 
-	pam_get_item(sshpam_handle, PAM_USER,
+	sshpam_err = pam_get_item(sshpam_handle, PAM_USER,
 	    (sshpam_const void **)ptr_pam_user);
+	if (sshpam_err != PAM_SUCCESS)
+		goto auth_fail;
 
 	environ[0] = NULL;
 	if (tz != NULL)
@@ -603,8 +587,7 @@ sshpam_store_conv(int n, sshpam_const struct pam_message **msg,
 
  fail:
 	for(i = 0; i < n; i++) {
-		if (reply[i].resp != NULL)
-			free(reply[i].resp);
+		free(reply[i].resp);
 	}
 	free(reply);
 	return (PAM_CONV_ERR);
@@ -637,6 +620,7 @@ sshpam_cleanup(void)
 static int
 sshpam_init(Authctxt *authctxt)
 {
+	extern char *__progname;
 	const char *pam_rhost, *pam_user, *user = authctxt->user;
 	const char **ptr_pam_user = &pam_user;
 
@@ -1022,8 +1006,7 @@ sshpam_tty_conv(int n, sshpam_const struct pam_message **msg,
 
  fail:
 	for(i = 0; i < n; i++) {
-		if (reply[i].resp != NULL)
-			free(reply[i].resp);
+		free(reply[i].resp);
 	}
 	free(reply);
 	return (PAM_CONV_ERR);
@@ -1181,8 +1164,7 @@ sshpam_passwd_conv(int n, sshpam_const struct pam_message **msg,
 
  fail:
 	for(i = 0; i < n; i++) {
-		if (reply[i].resp != NULL)
-			free(reply[i].resp);
+		free(reply[i].resp);
 	}
 	free(reply);
 	return (PAM_CONV_ERR);

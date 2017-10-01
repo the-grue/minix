@@ -1,4 +1,3 @@
-/*	$NetBSD: kexdh.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: kexdh.c,v 1.25 2015/01/19 20:16:15 markus Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -25,7 +24,9 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: kexdh.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_OPENSSL
+
 #include <sys/types.h>
 
 #include <signal.h>
@@ -89,3 +90,4 @@ kex_dh_hash(
 #endif
 	return 0;
 }
+#endif /* WITH_OPENSSL */

@@ -1,4 +1,3 @@
-/*	$NetBSD: gss-genr.c,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: gss-genr.c,v 1.23 2015/01/20 23:14:00 deraadt Exp $ */
 
 /*
@@ -26,16 +25,17 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD");
+
 #ifdef GSSAPI
 
+#include <sys/types.h>
 #include <sys/param.h>
 
+#include <limits.h>
 #include <stdarg.h>
 #include <string.h>
+#include <signal.h>
 #include <unistd.h>
-#include <stdarg.h>
-#include <limits.h>
 
 #include "xmalloc.h"
 #include "buffer.h"
@@ -255,7 +255,7 @@ ssh_gssapi_check_mechanism(Gssctxt **ctx, gss_OID oid, const char *host)
 {
 	gss_buffer_desc token = GSS_C_EMPTY_BUFFER;
 	OM_uint32 major, minor;
-	gss_OID_desc spnego_oid = {6, __UNCONST("\x2B\x06\x01\x05\x05\x02")};
+	gss_OID_desc spnego_oid = {6, (void *)"\x2B\x06\x01\x05\x05\x02"};
 
 	/* RFC 4462 says we MUST NOT do SPNEGO */
 	if (oid->length == spnego_oid.length && 

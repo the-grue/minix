@@ -1,4 +1,3 @@
-/*	$NetBSD: channels.h,v 1.11 2015/07/03 00:59:59 christos Exp $	*/
 /* $OpenBSD: channels.h,v 1.118 2015/07/01 02:26:31 djm Exp $ */
 
 /*
@@ -68,7 +67,7 @@ typedef struct Channel Channel;
 
 typedef void channel_open_fn(int, int, void *);
 typedef void channel_callback_fn(int, void *);
-typedef int channel_infilter_fn(struct Channel *, const char *, int);
+typedef int channel_infilter_fn(struct Channel *, char *, int);
 typedef void channel_filter_cleanup_fn(int, void *);
 typedef u_char *channel_outfilter_fn(struct Channel *, u_char **, u_int *);
 
@@ -106,6 +105,9 @@ struct Channel {
 	int     sock;		/* sock fd */
 	int     ctl_chan;	/* control channel (multiplexed connections) */
 	int     isatty;		/* rfd is a tty */
+#ifdef _AIX
+	int     wfd_isatty;	/* wfd is a tty */
+#endif
 	int	client_tty;	/* (client) TTY has been requested */
 	int     force_drain;	/* force close on iEOF */
 	time_t	notbefore;	/* Pause IO until deadline (time_t) */
@@ -132,10 +134,8 @@ struct Channel {
 	u_int	local_window_max;
 	u_int	local_consumed;
 	u_int	local_maxpacket;
-	int	dynamic_window;
 	int     extended_usage;
 	int	single_connection;
-	u_int 	tcpwinsz;	
 
 	char   *ctype;		/* type */
 
@@ -170,11 +170,9 @@ struct Channel {
 
 /* default window/packet sizes for tcp/x11-fwd-channel */
 #define CHAN_SES_PACKET_DEFAULT	(32*1024)
-#define CHAN_SES_WINDOW_DEFAULT	(4*CHAN_SES_PACKET_DEFAULT)
-
+#define CHAN_SES_WINDOW_DEFAULT	(64*CHAN_SES_PACKET_DEFAULT)
 #define CHAN_TCP_PACKET_DEFAULT	(32*1024)
-#define CHAN_TCP_WINDOW_DEFAULT	(4*CHAN_TCP_PACKET_DEFAULT)
-
+#define CHAN_TCP_WINDOW_DEFAULT	(64*CHAN_TCP_PACKET_DEFAULT)
 #define CHAN_X11_PACKET_DEFAULT	(16*1024)
 #define CHAN_X11_WINDOW_DEFAULT	(4*CHAN_X11_PACKET_DEFAULT)
 
@@ -212,15 +210,14 @@ struct Channel {
 
 Channel	*channel_by_id(int);
 Channel	*channel_lookup(int);
-Channel *channel_new(const char *, int, int, int, int, u_int, u_int, int,
-    const char *, int);
+Channel *channel_new(char *, int, int, int, int, u_int, u_int, int, char *, int);
 void	 channel_set_fds(int, int, int, int, int, int, int, u_int);
 void	 channel_free(Channel *);
 void	 channel_free_all(void);
 void	 channel_stop_listening(void);
 
 void	 channel_send_open(int);
-void	 channel_request_start(int, const char *, int);
+void	 channel_request_start(int, char *, int);
 void	 channel_register_cleanup(int, channel_callback_fn *, int);
 void	 channel_register_open_confirm(int, channel_open_fn *, void *);
 void	 channel_register_filter(int, channel_infilter_fn *,
@@ -250,7 +247,7 @@ int	 channel_input_status_confirm(int, u_int32_t, void *);
 void	 channel_prepare_select(fd_set **, fd_set **, int *, u_int*,
 	     time_t*, int);
 void     channel_after_select(fd_set *, fd_set *);
-int	 channel_output_poll(void);
+void     channel_output_poll(void);
 
 int      channel_not_very_much_buffered_data(void);
 void     channel_close_all(void);
@@ -271,12 +268,12 @@ void	 channel_clear_permitted_opens(void);
 void	 channel_clear_adm_permitted_opens(void);
 void 	 channel_print_adm_permitted_opens(void);
 int      channel_input_port_forward_request(int, struct ForwardOptions *);
-Channel	*channel_connect_to_port(const char *, u_short, const char *, const char *);
-Channel *channel_connect_to_path(const char *, const char *, const char *);
+Channel	*channel_connect_to_port(const char *, u_short, char *, char *);
+Channel *channel_connect_to_path(const char *, char *, char *);
 Channel	*channel_connect_stdio_fwd(const char*, u_short, int, int);
 Channel	*channel_connect_by_listen_address(const char *, u_short,
-	     const char *, char *);
-Channel	*channel_connect_by_listen_path(const char *, const char *, const char *);
+	     char *, char *);
+Channel	*channel_connect_by_listen_path(const char *, char *, char *);
 int	 channel_request_remote_forwarding(struct Forward *);
 int	 channel_setup_local_fwd_listener(struct Forward *, struct ForwardOptions *);
 int	 channel_request_rforward_cancel(struct Forward *);
@@ -314,8 +311,5 @@ void	 chan_ibuf_empty(Channel *);
 void	 chan_rcvd_ieof(Channel *);
 void	 chan_write_failed(Channel *);
 void	 chan_obuf_empty(Channel *);
-
-/* hpn handler */
-void     channel_set_hpn(int, int);
 
 #endif

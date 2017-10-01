@@ -1,4 +1,3 @@
-/*	$NetBSD: roaming_common.c,v 1.9 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: roaming_common.c,v 1.13 2015/01/27 12:54:06 okan Exp $ */
 /*
  * Copyright (c) 2004-2009 AppGate Network Security AB
@@ -15,8 +14,8 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: roaming_common.c,v 1.9 2015/04/03 23:58:19 christos Exp $");
 
 #include <sys/types.h>
 #include <sys/socket.h>

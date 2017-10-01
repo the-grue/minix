@@ -1,4 +1,3 @@
-/*	$NetBSD: servconf.c,v 1.19 2015/08/13 10:33:21 christos Exp $	*/
 
 /* $OpenBSD: servconf.c,v 1.280 2015/08/06 14:53:21 deraadt Exp $ */
 /*
@@ -13,13 +12,12 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: servconf.c,v 1.19 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/queue.h>
-#include <sys/param.h>
 
 #include <netinet/in.h>
+#include <netinet/in_systm.h>
 #include <netinet/ip.h>
 
 #include <ctype.h>
@@ -33,16 +31,11 @@ __RCSID("$NetBSD: servconf.c,v 1.19 2015/08/13 10:33:21 christos Exp $");
 #include <limits.h>
 #include <stdarg.h>
 #include <errno.h>
+#ifdef HAVE_UTIL_H
 #include <util.h>
-#include <time.h>
+#endif
 
-#ifdef KRB4
-#include <krb.h>
-#ifdef AFS
-#include <kafs.h>
-#endif /* AFS */
-#endif /* KRB4 */
-
+#include "openbsd-compat/sys-queue.h"
 #include "xmalloc.h"
 #include "ssh.h"
 #include "log.h"
@@ -62,11 +55,6 @@ __RCSID("$NetBSD: servconf.c,v 1.19 2015/08/13 10:33:21 christos Exp $");
 #include "packet.h"
 #include "hostfile.h"
 #include "auth.h"
-#include "fmt_scaled.h"
-
-#ifdef WITH_LDAP_PUBKEY
-#include "ldapauth.h"
-#endif
 #include "myproposal.h"
 #include "digest.h"
 
@@ -103,7 +91,6 @@ initialize_server_options(ServerOptions *options)
 	options->key_regeneration_time = -1;
 	options->permit_root_login = PERMIT_NOT_SET;
 	options->ignore_rhosts = -1;
-	options->ignore_root_rhosts = -1;
 	options->ignore_user_known_hosts = -1;
 	options->print_motd = -1;
 	options->print_lastlog = -1;
@@ -128,12 +115,6 @@ initialize_server_options(ServerOptions *options)
 	options->kerberos_authentication = -1;
 	options->kerberos_or_local_passwd = -1;
 	options->kerberos_ticket_cleanup = -1;
-#if defined(AFS) || defined(KRB5)
-	options->kerberos_tgt_passing = -1;
-#endif
-#ifdef AFS
-	options->afs_token_passing = -1;
-#endif
 	options->kerberos_get_afs_token = -1;
 	options->gss_authentication=-1;
 	options->gss_cleanup_creds = -1;
@@ -155,25 +136,6 @@ initialize_server_options(ServerOptions *options)
 	options->num_allow_groups = 0;
 	options->num_deny_groups = 0;
 	options->ciphers = NULL;
-#ifdef WITH_LDAP_PUBKEY
-	/* XXX dirty */
-	options->lpk.ld = NULL;
-	options->lpk.on = -1;
-	options->lpk.servers = NULL;
-	options->lpk.u_basedn = NULL;
-	options->lpk.g_basedn = NULL;
-	options->lpk.binddn = NULL;
-	options->lpk.bindpw = NULL;
-	options->lpk.sgroup = NULL;
-	options->lpk.filter = NULL;
-	options->lpk.fgroup = NULL;
-	options->lpk.l_conf = NULL;
-	options->lpk.tls = -1;
-	options->lpk.b_timeout.tv_sec = -1;
-	options->lpk.s_timeout.tv_sec = -1;
-	options->lpk.flags = FLAG_EMPTY;
-	options->lpk.pub_key_attr = NULL;
-#endif
 	options->macs = NULL;
 	options->kex_algorithms = NULL;
 	options->protocol = SSH_PROTO_UNKNOWN;
@@ -207,10 +169,6 @@ initialize_server_options(ServerOptions *options)
 	options->ip_qos_bulk = -1;
 	options->version_addendum = NULL;
 	options->fingerprint_hash = -1;
-	options->none_enabled = -1;
-	options->tcp_rcv_buf_poll = -1;
-	options->hpn_disabled = -1;
-	options->hpn_buffer_size = -1;
 }
 
 /* Returns 1 if a string option is unset or set to "none" or 0 otherwise. */
@@ -223,34 +181,31 @@ option_clear_or_none(const char *o)
 void
 fill_default_server_options(ServerOptions *options)
 {
-	/* needed for hpn socket tests */
-	int sock;
-	int socksize;
-	socklen_t socksizelen = sizeof(int);
+	int i;
 
 	/* Portable-specific options */
 	if (options->use_pam == -1)
 		options->use_pam = 0;
 
 	/* Standard Options */
-	int i;
-
 	if (options->protocol == SSH_PROTO_UNKNOWN)
 		options->protocol = SSH_PROTO_2;
 	if (options->num_host_key_files == 0) {
 		/* fill default hostkeys for protocols */
 		if (options->protocol & SSH_PROTO_1)
 			options->host_key_files[options->num_host_key_files++] =
-			    __UNCONST(_PATH_HOST_KEY_FILE);
+			    _PATH_HOST_KEY_FILE;
 		if (options->protocol & SSH_PROTO_2) {
 			options->host_key_files[options->num_host_key_files++] =
-			    __UNCONST(_PATH_HOST_RSA_KEY_FILE);
+			    _PATH_HOST_RSA_KEY_FILE;
 			options->host_key_files[options->num_host_key_files++] =
-			    __UNCONST(_PATH_HOST_DSA_KEY_FILE);
+			    _PATH_HOST_DSA_KEY_FILE;
+#ifdef OPENSSL_HAS_ECC
 			options->host_key_files[options->num_host_key_files++] =
-			    __UNCONST(_PATH_HOST_ECDSA_KEY_FILE);
+			    _PATH_HOST_ECDSA_KEY_FILE;
+#endif
 			options->host_key_files[options->num_host_key_files++] =
-			    __UNCONST(_PATH_HOST_ED25519_KEY_FILE);
+			    _PATH_HOST_ED25519_KEY_FILE;
 		}
 	}
 	/* No certificates by default */
@@ -272,8 +227,6 @@ fill_default_server_options(ServerOptions *options)
 		options->permit_root_login = PERMIT_NO_PASSWD;
 	if (options->ignore_rhosts == -1)
 		options->ignore_rhosts = 1;
-	if (options->ignore_root_rhosts == -1)
-		options->ignore_root_rhosts = options->ignore_rhosts;
 	if (options->ignore_user_known_hosts == -1)
 		options->ignore_user_known_hosts = 0;
 	if (options->print_motd == -1)
@@ -318,14 +271,6 @@ fill_default_server_options(ServerOptions *options)
 		options->kerberos_or_local_passwd = 1;
 	if (options->kerberos_ticket_cleanup == -1)
 		options->kerberos_ticket_cleanup = 1;
-#if defined(AFS) || defined(KRB5)
-	if (options->kerberos_tgt_passing == -1)
-		options->kerberos_tgt_passing = 0;
-#endif
-#ifdef AFS
-	if (options->afs_token_passing == -1)
-		options->afs_token_passing = 0;
-#endif
 	if (options->kerberos_get_afs_token == -1)
 		options->kerberos_get_afs_token = 0;
 	if (options->gss_authentication == -1)
@@ -390,72 +335,6 @@ fill_default_server_options(ServerOptions *options)
 		options->ip_qos_bulk = IPTOS_THROUGHPUT;
 	if (options->version_addendum == NULL)
 		options->version_addendum = xstrdup("");
-
-	if (options->hpn_disabled == -1) 
-		options->hpn_disabled = 0;
-
-	if (options->hpn_buffer_size == -1) {
-		/* option not explicitly set. Now we have to figure out */
-		/* what value to use */
-		if (options->hpn_disabled == 1) {
-			options->hpn_buffer_size = CHAN_SES_WINDOW_DEFAULT;
-		} else {
-			/* get the current RCV size and set it to that */
-			/*create a socket but don't connect it */
-			/* we use that the get the rcv socket size */
-			sock = socket(AF_INET, SOCK_STREAM, 0);
-			getsockopt(sock, SOL_SOCKET, SO_RCVBUF, 
-				   &socksize, &socksizelen);
-			close(sock);
-			options->hpn_buffer_size = socksize;
-			debug ("HPN Buffer Size: %d", options->hpn_buffer_size);
-			
-		} 
-	} else {
-		/* we have to do this incase the user sets both values in a contradictory */
-		/* manner. hpn_disabled overrrides hpn_buffer_size*/
-		if (options->hpn_disabled <= 0) {
-			if (options->hpn_buffer_size == 0)
-				options->hpn_buffer_size = 1;
-			/* limit the maximum buffer to 64MB */
-			if (options->hpn_buffer_size > 64*1024) {
-				options->hpn_buffer_size = 64*1024*1024;
-			} else {
-				options->hpn_buffer_size *= 1024;
-			}
-		} else
-			options->hpn_buffer_size = CHAN_TCP_WINDOW_DEFAULT;
-	}
-
-#ifdef WITH_LDAP_PUBKEY
-	if (options->lpk.on == -1)
-	    options->lpk.on = _DEFAULT_LPK_ON;
-	if (options->lpk.servers == NULL)
-	    options->lpk.servers = _DEFAULT_LPK_SERVERS;
-	if (options->lpk.u_basedn == NULL)
-	    options->lpk.u_basedn = _DEFAULT_LPK_UDN;
-	if (options->lpk.g_basedn == NULL)
-	    options->lpk.g_basedn = _DEFAULT_LPK_GDN;
-	if (options->lpk.binddn == NULL)
-	    options->lpk.binddn = _DEFAULT_LPK_BINDDN;
-	if (options->lpk.bindpw == NULL)
-	    options->lpk.bindpw = _DEFAULT_LPK_BINDPW;
-	if (options->lpk.sgroup == NULL)
-	    options->lpk.sgroup = _DEFAULT_LPK_SGROUP;
-	if (options->lpk.filter == NULL)
-	    options->lpk.filter = _DEFAULT_LPK_FILTER;
-	if (options->lpk.tls == -1)
-	    options->lpk.tls = _DEFAULT_LPK_TLS;
-	if (options->lpk.b_timeout.tv_sec == -1)
-	    options->lpk.b_timeout.tv_sec = _DEFAULT_LPK_BTIMEOUT;
-	if (options->lpk.s_timeout.tv_sec == -1)
-	    options->lpk.s_timeout.tv_sec = _DEFAULT_LPK_STIMEOUT;
-	if (options->lpk.l_conf == NULL)
-	    options->lpk.l_conf = _DEFAULT_LPK_LDP;
-	if (options->lpk.pub_key_attr == NULL)
-	    options->lpk.pub_key_attr = __UNCONST(_DEFAULT_LPK_PUB);
-#endif
-
 	if (options->fwd_opts.streamlocal_bind_mask == (mode_t)-1)
 		options->fwd_opts.streamlocal_bind_mask = 0177;
 	if (options->fwd_opts.streamlocal_bind_unlink == -1)
@@ -494,6 +373,16 @@ fill_default_server_options(ServerOptions *options)
 	for (i = 0; i < options->num_host_cert_files; i++)
 		CLEAR_ON_NONE(options->host_cert_files[i]);
 #undef CLEAR_ON_NONE
+
+#ifndef HAVE_MMAP
+	if (use_privsep && options->compression == 1) {
+		error("This platform does not support both privilege "
+		    "separation and compression");
+		error("Compression disabled");
+		options->compression = 0;
+	}
+#endif
+
 }
 
 /* Keyword tokens. */
@@ -501,6 +390,7 @@ typedef enum {
 	sBadOption,		/* == unknown option */
 	/* Portable-specific options */
 	sUsePAM,
+	/* Standard Options */
 	sPort, sHostKeyFile, sServerKeyBits, sLoginGraceTime,
 	sKeyRegenerationTime, sPermitRootLogin, sLogFacility, sLogLevel,
 	sRhostsRSAAuthentication, sRSAAuthentication,
@@ -529,19 +419,11 @@ typedef enum {
 	sRevokedKeys, sTrustedUserCAKeys, sAuthorizedPrincipalsFile,
 	sAuthorizedPrincipalsCommand, sAuthorizedPrincipalsCommandUser,
 	sKexAlgorithms, sIPQoS, sVersionAddendum,
-	sIgnoreRootRhosts,
-	sNoneEnabled, sTcpRcvBufPoll,sHPNDisabled, sHPNBufferSize,
 	sAuthorizedKeysCommand, sAuthorizedKeysCommandUser,
 	sAuthenticationMethods, sHostKeyAgent, sPermitUserRC,
 	sStreamLocalBindMask, sStreamLocalBindUnlink,
 	sAllowStreamLocalForwarding, sFingerprintHash,
 	sDeprecated, sUnsupported
-#ifdef WITH_LDAP_PUBKEY
-	,sLdapPublickey, sLdapServers, sLdapUserDN
-	,sLdapGroupDN, sBindDN, sBindPw, sMyGroup
-	,sLdapFilter, sForceTLS, sBindTimeout
-	,sSearchTimeout, sLdapConf ,sLpkPubKeyAttr 
-#endif
 } ServerOpCodes;
 
 #define SSHCFG_GLOBAL	0x01	/* allowed in main section of sshd_config */
@@ -554,11 +436,14 @@ static struct {
 	ServerOpCodes opcode;
 	u_int flags;
 } keywords[] = {
+	/* Portable-specific options */
 #ifdef USE_PAM
 	{ "usepam", sUsePAM, SSHCFG_GLOBAL },
 #else
 	{ "usepam", sUnsupported, SSHCFG_GLOBAL },
 #endif
+	{ "pamauthenticationviakbdint", sDeprecated, SSHCFG_GLOBAL },
+	/* Standard Options */
 	{ "port", sPort, SSHCFG_GLOBAL },
 	{ "hostkey", sHostKeyFile, SSHCFG_GLOBAL },
 	{ "hostdsakey", sHostKeyFile, SSHCFG_GLOBAL },		/* alias */
@@ -584,18 +469,18 @@ static struct {
 	{ "kerberosauthentication", sKerberosAuthentication, SSHCFG_ALL },
 	{ "kerberosorlocalpasswd", sKerberosOrLocalPasswd, SSHCFG_GLOBAL },
 	{ "kerberosticketcleanup", sKerberosTicketCleanup, SSHCFG_GLOBAL },
+#ifdef USE_AFS
 	{ "kerberosgetafstoken", sKerberosGetAFSToken, SSHCFG_GLOBAL },
+#else
+	{ "kerberosgetafstoken", sUnsupported, SSHCFG_GLOBAL },
+#endif
 #else
 	{ "kerberosauthentication", sUnsupported, SSHCFG_ALL },
 	{ "kerberosorlocalpasswd", sUnsupported, SSHCFG_GLOBAL },
 	{ "kerberosticketcleanup", sUnsupported, SSHCFG_GLOBAL },
 	{ "kerberosgetafstoken", sUnsupported, SSHCFG_GLOBAL },
 #endif
-#if defined(AFS) || defined(KRB5)
-	{ "kerberostgtpassing", sKerberosTgtPassing, SSHCFG_GLOBAL },
-#else
 	{ "kerberostgtpassing", sUnsupported, SSHCFG_GLOBAL },
-#endif
 	{ "afstokenpassing", sUnsupported, SSHCFG_GLOBAL },
 #ifdef GSSAPI
 	{ "gssapiauthentication", sGssAuthentication, SSHCFG_ALL },
@@ -616,7 +501,6 @@ static struct {
 	{ "printmotd", sPrintMotd, SSHCFG_GLOBAL },
 	{ "printlastlog", sPrintLastLog, SSHCFG_GLOBAL },
 	{ "ignorerhosts", sIgnoreRhosts, SSHCFG_GLOBAL },
-	{ "ignorerootrhosts", sIgnoreRootRhosts, SSHCFG_GLOBAL },
 	{ "ignoreuserknownhosts", sIgnoreUserKnownHosts, SSHCFG_GLOBAL },
 	{ "x11forwarding", sX11Forwarding, SSHCFG_ALL },
 	{ "x11displayoffset", sX11DisplayOffset, SSHCFG_ALL },
@@ -652,21 +536,6 @@ static struct {
 	{ "clientalivecountmax", sClientAliveCountMax, SSHCFG_GLOBAL },
 	{ "authorizedkeysfile", sAuthorizedKeysFile, SSHCFG_ALL },
 	{ "authorizedkeysfile2", sDeprecated, SSHCFG_ALL },
-#ifdef WITH_LDAP_PUBKEY
-	{ _DEFAULT_LPK_TOKEN, sLdapPublickey, SSHCFG_GLOBAL },
-	{ _DEFAULT_SRV_TOKEN, sLdapServers, SSHCFG_GLOBAL },
-	{ _DEFAULT_USR_TOKEN, sLdapUserDN, SSHCFG_GLOBAL },
-	{ _DEFAULT_GRP_TOKEN, sLdapGroupDN, SSHCFG_GLOBAL },
-	{ _DEFAULT_BDN_TOKEN, sBindDN, SSHCFG_GLOBAL },
-	{ _DEFAULT_BPW_TOKEN, sBindPw, SSHCFG_GLOBAL },
-	{ _DEFAULT_MYG_TOKEN, sMyGroup, SSHCFG_GLOBAL },
-	{ _DEFAULT_FIL_TOKEN, sLdapFilter, SSHCFG_GLOBAL },
-	{ _DEFAULT_TLS_TOKEN, sForceTLS, SSHCFG_GLOBAL },
-	{ _DEFAULT_BTI_TOKEN, sBindTimeout, SSHCFG_GLOBAL },
-	{ _DEFAULT_STI_TOKEN, sSearchTimeout, SSHCFG_GLOBAL },
-	{ _DEFAULT_LDP_TOKEN, sLdapConf, SSHCFG_GLOBAL },
-	{ "LpkPubKeyAttr", sLpkPubKeyAttr, SSHCFG_GLOBAL },
-#endif
 	{ "useprivilegeseparation", sUsePrivilegeSeparation, SSHCFG_GLOBAL},
 	{ "acceptenv", sAcceptEnv, SSHCFG_ALL },
 	{ "permittunnel", sPermitTunnel, SSHCFG_ALL },
@@ -687,10 +556,6 @@ static struct {
 	{ "authorizedprincipalscommand", sAuthorizedPrincipalsCommand, SSHCFG_ALL },
 	{ "authorizedprincipalscommanduser", sAuthorizedPrincipalsCommandUser, SSHCFG_ALL },
 	{ "versionaddendum", sVersionAddendum, SSHCFG_GLOBAL },
-	{ "noneenabled", sNoneEnabled, SSHCFG_ALL },
-	{ "hpndisabled", sHPNDisabled, SSHCFG_ALL },
-	{ "hpnbuffersize", sHPNBufferSize, SSHCFG_ALL },
-	{ "tcprcvbufpoll", sTcpRcvBufPoll, SSHCFG_ALL },
 	{ "authenticationmethods", sAuthenticationMethods, SSHCFG_ALL },
 	{ "streamlocalbindmask", sStreamLocalBindMask, SSHCFG_ALL },
 	{ "streamlocalbindunlink", sStreamLocalBindUnlink, SSHCFG_ALL },
@@ -701,7 +566,7 @@ static struct {
 
 static struct {
 	int val;
-	const char *text;
+	char *text;
 } tunmode_desc[] = {
 	{ SSH_TUNMODE_NO, "no" },
 	{ SSH_TUNMODE_POINTOPOINT, "point-to-point" },
@@ -722,7 +587,6 @@ parse_token(const char *cp, const char *filename,
 
 	for (i = 0; keywords[i].name; i++)
 		if (strcasecmp(cp, keywords[i].name) == 0) {
-		        debug ("Config token is %s", keywords[i].name);
 			*flags = keywords[i].flags;
 			return keywords[i].opcode;
 		}
@@ -1041,7 +905,7 @@ match_cfg_line(char **condition, int line, struct connection_info *ci)
 
 /* Multistate option parsing */
 struct multistate {
-	const char *key;
+	char *key;
 	int value;
 };
 static const struct multistate multistate_addressfamily[] = {
@@ -1095,10 +959,6 @@ process_server_config_line(ServerOptions *options, char *line,
 	int cmdline = 0, *intptr, value, value2, n, port;
 	SyslogFacility *log_facility_ptr;
 	LogLevel *log_level_ptr;
-#ifdef WITH_LDAP_PUBKEY
- 	unsigned long lvalue;
-#endif
-	time_t *timetptr __unused;
 	ServerOpCodes opcode;
 	u_int i, flags = 0;
 	size_t len;
@@ -1114,7 +974,6 @@ process_server_config_line(ServerOptions *options, char *line,
 	if (!arg || !*arg || *arg == '#')
 		return 0;
 	intptr = NULL;
-	timetptr = NULL;
 	charptr = NULL;
 	opcode = parse_token(arg, filename, linenum, &flags);
 
@@ -1306,26 +1165,6 @@ process_server_config_line(ServerOptions *options, char *line,
 			*intptr = value;
 		break;
 
-	case sIgnoreRootRhosts:
-		intptr = &options->ignore_root_rhosts;
-		goto parse_flag;
-
-	case sNoneEnabled:
-		intptr = &options->none_enabled;
-		goto parse_flag;
-
-	case sTcpRcvBufPoll:
-		intptr = &options->tcp_rcv_buf_poll;
-		goto parse_flag;
-
-	case sHPNDisabled:
-		intptr = &options->hpn_disabled;
-		goto parse_flag;
-
-	case sHPNBufferSize:
-		intptr = &options->hpn_buffer_size;
-		goto parse_int;
-
 	case sIgnoreUserKnownHosts:
 		intptr = &options->ignore_user_known_hosts;
 		goto parse_flag;
@@ -1382,10 +1221,6 @@ process_server_config_line(ServerOptions *options, char *line,
 
 	case sKerberosTicketCleanup:
 		intptr = &options->kerberos_ticket_cleanup;
-		goto parse_flag;
-
-	case sKerberosTgtPassing:
-		intptr = &options->kerberos_tgt_passing;
 		goto parse_flag;
 
 	case sKerberosGetAFSToken:
@@ -2021,125 +1856,6 @@ process_server_config_line(ServerOptions *options, char *line,
 		while (arg)
 		    arg = strdelim(&cp);
 		break;
-#ifdef WITH_LDAP_PUBKEY
-	case sLdapPublickey:
-		intptr = &options->lpk.on;
-		goto parse_flag;
-	case sLdapServers:
-		/* arg = strdelim(&cp); */
-		p = line;
-		while(*p++);
-		arg = p;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing ldap server",filename,linenum);
-		arg[strlen(arg)] = '\0';
-		if ((options->lpk.servers = ldap_parse_servers(arg)) == NULL)
-		    fatal("%s line %d: error in ldap servers", filename, linenum);
-		memset(arg,0,strlen(arg));
-		break;
-	case sLdapUserDN:
-		arg = cp;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing ldap server",filename,linenum);
-		arg[strlen(arg)] = '\0';
-		options->lpk.u_basedn = xstrdup(arg);
-		memset(arg,0,strlen(arg));
-		break;
-	case sLdapGroupDN:
-		arg = cp;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing ldap server",filename,linenum);
-		arg[strlen(arg)] = '\0';
-		options->lpk.g_basedn = xstrdup(arg);
-		memset(arg,0,strlen(arg));
-		break;
-	case sBindDN:
-		arg = cp;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing binddn",filename,linenum);
-		arg[strlen(arg)] = '\0';
-		options->lpk.binddn = xstrdup(arg);
-		memset(arg,0,strlen(arg));
-		break;
-	case sBindPw:
-		arg = cp;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing bindpw",filename,linenum);
-		arg[strlen(arg)] = '\0';
-		options->lpk.bindpw = xstrdup(arg);
-		memset(arg,0,strlen(arg));
-		break;
-	case sMyGroup:
-		arg = cp;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing groupname",filename, linenum);
-		arg[strlen(arg)] = '\0';
-		options->lpk.sgroup = xstrdup(arg);
-		if (options->lpk.sgroup)
-		    options->lpk.fgroup = ldap_parse_groups(options->lpk.sgroup);
-		memset(arg,0,strlen(arg));
-		break;
-	case sLdapFilter:
-		arg = cp;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing filter",filename, linenum);
-		arg[strlen(arg)] = '\0';
-		options->lpk.filter = xstrdup(arg);
-		memset(arg,0,strlen(arg));
-		break;
-	case sForceTLS:
-		intptr = &options->lpk.tls;
-		arg = strdelim(&cp);
-		if (!arg || *arg == '\0')
-			fatal("%s line %d: missing yes/no argument.",
-			    filename, linenum);
-		value = 0;	/* silence compiler */
-		if (strcmp(arg, "yes") == 0)
-			value = 1;
-		else if (strcmp(arg, "no") == 0)
-			value = 0;
-		else if (strcmp(arg, "try") == 0)
-			value = -1;
-		else
-			fatal("%s line %d: Bad yes/no argument: %s",
-				filename, linenum, arg);
-		if (*intptr == -1)
-			*intptr = value;
-		break;
-	case sBindTimeout:
-		timetptr = &options->lpk.b_timeout.tv_sec;
-parse_ulong:
-		arg = strdelim(&cp);
-		if (!arg || *arg == '\0')
-			fatal("%s line %d: missing integer value.",
-			    filename, linenum);
-		lvalue = atol(arg);
-		if (*activep && *timetptr == -1)
-			*timetptr = lvalue;
-		break;
-
-	case sSearchTimeout:
-		timetptr = &options->lpk.s_timeout.tv_sec;
-		goto parse_ulong;
-		break;
-	case sLdapConf:
-		arg = cp;
-		if (!arg || *arg == '\0')
-		    fatal("%s line %d: missing LpkLdapConf", filename, linenum);
-		arg[strlen(arg)] = '\0';
-		options->lpk.l_conf = xstrdup(arg);
-		memset(arg, 0, strlen(arg));
-		break;
-	case sLpkPubKeyAttr:
-		arg = cp;
-                if (!arg || *arg == '\0')
-                    fatal("%s line %d: missing pubkeyattr",filename,linenum);
-                arg[strlen(arg)] = '\0';
-                options->lpk.pub_key_attr = xstrdup(arg);
-                memset(arg,0,strlen(arg));
-                break;
-
-#endif
 
 	default:
 		fatal("%s line %d: Missing handler for opcode %s (%d)",
@@ -2323,7 +2039,7 @@ parse_server_config(ServerOptions *options, const char *filename, Buffer *conf,
 
 	debug2("%s: config %s len %d", __func__, filename, buffer_len(conf));
 
-	obuf = cbuf = xstrdup((const char *)buffer_ptr(conf));
+	obuf = cbuf = xstrdup(buffer_ptr(conf));
 	active = connectinfo ? 0 : 1;
 	linenum = 1;
 	while ((cp = strsep(&cbuf, "\n")) != NULL) {
@@ -2461,8 +2177,7 @@ dump_config(ServerOptions *o)
 	u_int i;
 	int ret;
 	struct addrinfo *ai;
-	char addr[NI_MAXHOST], port[NI_MAXSERV];
-	const char *s = NULL;
+	char addr[NI_MAXHOST], port[NI_MAXSERV], *s = NULL;
 	char *laddr1 = xstrdup(""), *laddr2 = NULL;
 
 	/* these are usually at the top of the config */
@@ -2498,6 +2213,9 @@ dump_config(ServerOptions *o)
 	free(laddr1);
 
 	/* integer arguments */
+#ifdef USE_PAM
+	dump_cfg_fmtint(sUsePAM, o->use_pam);
+#endif
 	dump_cfg_int(sServerKeyBits, o->server_key_bits);
 	dump_cfg_int(sLoginGraceTime, o->login_grace_time);
 	dump_cfg_int(sKeyRegenerationTime, o->key_regeneration_time);
@@ -2522,7 +2240,9 @@ dump_config(ServerOptions *o)
 	dump_cfg_fmtint(sKerberosAuthentication, o->kerberos_authentication);
 	dump_cfg_fmtint(sKerberosOrLocalPasswd, o->kerberos_or_local_passwd);
 	dump_cfg_fmtint(sKerberosTicketCleanup, o->kerberos_ticket_cleanup);
+# ifdef USE_AFS
 	dump_cfg_fmtint(sKerberosGetAFSToken, o->kerberos_get_afs_token);
+# endif
 #endif
 #ifdef GSSAPI
 	dump_cfg_fmtint(sGssAuthentication, o->gss_authentication);

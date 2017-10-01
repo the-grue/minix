@@ -14,8 +14,10 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: digest-openssl.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_OPENSSL
 
 #include <sys/types.h>
 #include <limits.h>
@@ -24,9 +26,20 @@ __RCSID("$NetBSD: digest-openssl.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include <openssl/evp.h>
 
+#include "openbsd-compat/openssl-compat.h"
+
 #include "sshbuf.h"
 #include "digest.h"
 #include "ssherr.h"
+
+#ifndef HAVE_EVP_RIPEMD160
+# define EVP_ripemd160 NULL
+#endif /* HAVE_EVP_RIPEMD160 */
+#ifndef HAVE_EVP_SHA256
+# define EVP_sha256 NULL
+# define EVP_sha384 NULL
+# define EVP_sha512 NULL
+#endif /* HAVE_EVP_SHA256 */
 
 struct ssh_digest_ctx {
 	int alg;
@@ -57,6 +70,8 @@ ssh_digest_by_alg(int alg)
 	if (alg < 0 || alg >= SSH_DIGEST_MAX)
 		return NULL;
 	if (digests[alg].id != alg) /* sanity */
+		return NULL;
+	if (digests[alg].mdfunc == NULL)
 		return NULL;
 	return &(digests[alg]);
 }
@@ -187,3 +202,4 @@ ssh_digest_buffer(int alg, const struct sshbuf *b, u_char *d, size_t dlen)
 {
 	return ssh_digest_memory(alg, sshbuf_ptr(b), sshbuf_len(b), d, dlen);
 }
+#endif /* WITH_OPENSSL */

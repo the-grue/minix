@@ -2132,6 +2132,8 @@
 ./usr/lib/libsockevent_pic.a                            minix-comp
 ./usr/lib/libsqlite3.a                                  minix-comp
 ./usr/lib/libsqlite3_pic.a                              minix-comp
+./usr/lib/libssh.a                                      minix-comp      crypto
+./usr/lib/libssh_pic.a                                  minix-comp      crypto
 ./usr/lib/libstdc++.a                                   minix-comp      libstdcxx
 ./usr/lib/libstdc++_pic.a                               minix-comp      libstdcxx
 ./usr/lib/libsupc++.a                                   minix-comp      libstdcxx

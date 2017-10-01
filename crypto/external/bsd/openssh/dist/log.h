@@ -1,4 +1,3 @@
-/*	$NetBSD: log.h,v 1.9 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: log.h,v 1.20 2013/04/07 02:10:33 dtucker Exp $ */
 
 /*
@@ -21,6 +20,9 @@ typedef enum {
 	SYSLOG_FACILITY_DAEMON,
 	SYSLOG_FACILITY_USER,
 	SYSLOG_FACILITY_AUTH,
+#ifdef LOG_AUTHPRIV
+	SYSLOG_FACILITY_AUTHPRIV,
+#endif
 	SYSLOG_FACILITY_LOCAL0,
 	SYSLOG_FACILITY_LOCAL1,
 	SYSLOG_FACILITY_LOCAL2,
@@ -46,7 +48,7 @@ typedef enum {
 
 typedef void (log_handler_fn)(LogLevel, const char *, void *);
 
-void     log_init(const char *, LogLevel, SyslogFacility, int);
+void     log_init(char *, LogLevel, SyslogFacility, int);
 void     log_change_level(LogLevel);
 int      log_is_on_stderr(void);
 void     log_redirect_stderr_to(const char *);
@@ -71,7 +73,6 @@ void     debug3(const char *, ...) __attribute__((format(printf, 1, 2)));
 void	 set_log_handler(log_handler_fn *, void *);
 void	 do_log2(LogLevel, const char *, ...)
     __attribute__((format(printf, 2, 3)));
-void	 do_log(LogLevel, const char *, va_list)
-    __attribute__((format(printf, 2, 0)));
+void	 do_log(LogLevel, const char *, va_list);
 void	 cleanup_exit(int) __attribute__((noreturn));
 #endif

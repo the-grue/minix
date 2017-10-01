@@ -1,4 +1,3 @@
-/*	$NetBSD: ttymodes.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ttymodes.c,v 1.29 2008/11/02 00:16:16 stevesk Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -45,7 +44,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ttymodes.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 
 #include <errno.h>
@@ -259,6 +258,7 @@ special_char_encode(cc_t c)
 #endif /* _POSIX_VDISABLE */
 	return c;
 }
+
 /*
  * Decode a special character from SSH line format.
  */

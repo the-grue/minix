@@ -16,7 +16,9 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: sandbox-rlimit.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef SANDBOX_RLIMIT
+
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/time.h>
@@ -40,7 +42,7 @@ struct ssh_sandbox {
 };
 
 struct ssh_sandbox *
-ssh_sandbox_init(void)
+ssh_sandbox_init(struct monitor *monitor)
 {
 	struct ssh_sandbox *box;
 
@@ -62,15 +64,21 @@ ssh_sandbox_child(struct ssh_sandbox *box)
 
 	rl_zero.rlim_cur = rl_zero.rlim_max = 0;
 
+#ifndef SANDBOX_SKIP_RLIMIT_FSIZE
 	if (setrlimit(RLIMIT_FSIZE, &rl_zero) == -1)
 		fatal("%s: setrlimit(RLIMIT_FSIZE, { 0, 0 }): %s",
 			__func__, strerror(errno));
+#endif
+#ifndef SANDBOX_SKIP_RLIMIT_NOFILE
 	if (setrlimit(RLIMIT_NOFILE, &rl_zero) == -1)
 		fatal("%s: setrlimit(RLIMIT_NOFILE, { 0, 0 }): %s",
 			__func__, strerror(errno));
+#endif
+#ifdef HAVE_RLIMIT_NPROC
 	if (setrlimit(RLIMIT_NPROC, &rl_zero) == -1)
 		fatal("%s: setrlimit(RLIMIT_NPROC, { 0, 0 }): %s",
 			__func__, strerror(errno));
+#endif
 }
 
 void
@@ -84,6 +92,6 @@ void
 ssh_sandbox_parent_preauth(struct ssh_sandbox *box, pid_t child_pid)
 {
 	box->child_pid = child_pid;
-	/* Nothing to do here */
 }
 
+#endif /* SANDBOX_RLIMIT */

@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-pkcs11-helper.c,v 1.9 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: ssh-pkcs11-helper.c,v 1.11 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Copyright (c) 2010 Markus Friedl.  All rights reserved.
@@ -15,13 +14,15 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: ssh-pkcs11-helper.c,v 1.9 2015/08/21 08:20:59 christos Exp $");
 
 #include <sys/types.h>
-#include <sys/queue.h>
-#include <sys/time.h>
-#include <sys/param.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
+
+#include "openbsd-compat/sys-queue.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -35,6 +36,8 @@ __RCSID("$NetBSD: ssh-pkcs11-helper.c,v 1.9 2015/08/21 08:20:59 christos Exp $")
 #include "key.h"
 #include "authfd.h"
 #include "ssh-pkcs11.h"
+
+#ifdef ENABLE_PKCS11
 
 /* borrows code from sftp-server and ssh-agent */
 
@@ -274,10 +277,14 @@ main(int argc, char **argv)
 	SyslogFacility log_facility = SYSLOG_FACILITY_AUTH;
 	LogLevel log_level = SYSLOG_LEVEL_ERROR;
 	char buf[4*4096];
+
 	extern char *__progname;
 
 	TAILQ_INIT(&pkcs11_keylist);
 	pkcs11_init(0);
+
+	seed_rng();
+	__progname = ssh_get_progname(argv[0]);
 
 	log_init(__progname, log_level, log_facility, log_stderr);
 
@@ -354,3 +361,14 @@ main(int argc, char **argv)
 			process();
 	}
 }
+#else /* ENABLE_PKCS11 */
+int
+main(int argc, char **argv)
+{
+	extern char *__progname;
+
+	__progname = ssh_get_progname(argv[0]);
+	log_init(__progname, SYSLOG_LEVEL_ERROR, SYSLOG_FACILITY_AUTH, 0);
+	fatal("PKCS#11 support disabled at compile time");
+}
+#endif /* ENABLE_PKCS11 */

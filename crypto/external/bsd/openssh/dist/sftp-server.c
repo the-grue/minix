@@ -1,4 +1,3 @@
-/*	$NetBSD: sftp-server.c,v 1.13 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: sftp-server.c,v 1.107 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Copyright (c) 2000-2004 Markus Friedl.  All rights reserved.
@@ -17,21 +16,30 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: sftp-server.c,v 1.13 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/param.h>	/* MIN */
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/time.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
+#ifdef HAVE_SYS_MOUNT_H
 #include <sys/mount.h>
+#endif
+#ifdef HAVE_SYS_STATVFS_H
 #include <sys/statvfs.h>
+#endif
+#ifdef HAVE_SYS_PRCTL_H
+#include <sys/prctl.h>
+#endif
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pwd.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <pwd.h>
 #include <time.h>
 #include <unistd.h>
 #include <stdarg.h>
@@ -432,7 +440,7 @@ handle_close(int handle)
 }
 
 static void
-handle_log_close(int handle, const char *emsg)
+handle_log_close(int handle, char *emsg)
 {
 	if (handle_is_ok(handle, HANDLE_FILE)) {
 		logit("%s%sclose \"%s\" bytes read %llu written %llu",
@@ -625,7 +633,7 @@ send_statvfs(u_int32_t id, struct statvfs *st)
 	    (r = sshbuf_put_u64(msg, st->f_files)) != 0 ||
 	    (r = sshbuf_put_u64(msg, st->f_ffree)) != 0 ||
 	    (r = sshbuf_put_u64(msg, st->f_favail)) != 0 ||
-	    (r = sshbuf_put_u64(msg, st->f_fsid)) != 0 ||
+	    (r = sshbuf_put_u64(msg, FSID_TO_ULONG(st->f_fsid))) != 0 ||
 	    (r = sshbuf_put_u64(msg, flag)) != 0 ||
 	    (r = sshbuf_put_u64(msg, st->f_namemax)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
@@ -959,7 +967,11 @@ process_fsetstat(u_int32_t id)
 		}
 		if (a.flags & SSH2_FILEXFER_ATTR_PERMISSIONS) {
 			logit("set \"%s\" mode %04o", name, a.perm);
+#ifdef HAVE_FCHMOD
 			r = fchmod(fd, a.perm & 07777);
+#else
+			r = chmod(name, a.perm & 07777);
+#endif
 			if (r == -1)
 				status = errno_to_portable(errno);
 		}
@@ -970,14 +982,22 @@ process_fsetstat(u_int32_t id)
 			strftime(buf, sizeof(buf), "%Y%m%d-%H:%M:%S",
 			    localtime(&t));
 			logit("set \"%s\" modtime %s", name, buf);
+#ifdef HAVE_FUTIMES
 			r = futimes(fd, attrib_to_tv(&a));
+#else
+			r = utimes(name, attrib_to_tv(&a));
+#endif
 			if (r == -1)
 				status = errno_to_portable(errno);
 		}
 		if (a.flags & SSH2_FILEXFER_ATTR_UIDGID) {
 			logit("set \"%s\" owner %lu group %lu", name,
 			    (u_long)a.uid, (u_long)a.gid);
+#ifdef HAVE_FCHOWN
 			r = fchown(fd, a.uid, a.gid);
+#else
+			r = chown(name, a.uid, a.gid);
+#endif
 			if (r == -1)
 				status = errno_to_portable(errno);
 		}
@@ -1172,7 +1192,14 @@ process_rename(u_int32_t id)
 	else if (S_ISREG(sb.st_mode)) {
 		/* Race-free rename of regular files */
 		if (link(oldpath, newpath) == -1) {
-			if (errno == EOPNOTSUPP) {
+			if (errno == EOPNOTSUPP || errno == ENOSYS
+#ifdef EXDEV
+			    || errno == EXDEV
+#endif
+#ifdef LINK_OPNOTSUPP_ERRNO
+			    || errno == LINK_OPNOTSUPP_ERRNO
+#endif
+			    ) {
 				struct stat st;
 
 				/*
@@ -1459,7 +1486,7 @@ sftp_server_cleanup_exit(int i)
 	_exit(i);
 }
 
-__dead static void
+static void
 sftp_server_usage(void)
 {
 	extern char *__progname;
@@ -1486,6 +1513,7 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 	extern char *optarg;
 	extern char *__progname;
 
+	__progname = ssh_get_progname(argv[0]);
 	log_init(__progname, log_level, log_facility, log_stderr);
 
 	pw = pwcopy(user_pw);
@@ -1559,6 +1587,17 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 
 	log_init(__progname, log_level, log_facility, log_stderr);
 
+#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
+	/*
+	 * On Linux, we should try to avoid making /proc/self/{mem,maps}
+	 * available to the user so that sftp access doesn't automatically
+	 * imply arbitrary code execution access that will break
+	 * restricted configurations.
+	 */
+	if (prctl(PR_SET_DUMPABLE, 0) != 0)
+		fatal("unable to make the process undumpable");
+#endif /* defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE) */
+
 	if ((cp = getenv("SSH_CONNECTION")) != NULL) {
 		client_addr = xstrdup(cp);
 		if ((cp = strchr(client_addr, ' ')) == NULL) {
@@ -1575,6 +1614,11 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 
 	in = STDIN_FILENO;
 	out = STDOUT_FILENO;
+
+#ifdef HAVE_CYGWIN
+	setmode(in, O_BINARY);
+	setmode(out, O_BINARY);
+#endif
 
 	max = 0;
 	if (in > max)

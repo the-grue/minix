@@ -1,4 +1,3 @@
-/*	$NetBSD: hostfile.c,v 1.8 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: hostfile.c,v 1.66 2015/05/04 06:10:48 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -38,7 +37,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: hostfile.c,v 1.8 2015/07/03 01:00:00 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -46,11 +45,11 @@ __RCSID("$NetBSD: hostfile.c,v 1.8 2015/07/03 01:00:00 christos Exp $");
 
 #include <errno.h>
 #include <resolv.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "xmalloc.h"

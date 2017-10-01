@@ -1,4 +1,3 @@
-/*	$NetBSD: cipher-3des1.c,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: cipher-3des1.c,v 1.12 2015/01/14 10:24:42 markus Exp $ */
 /*
  * Copyright (c) 2003 Markus Friedl.  All rights reserved.
@@ -20,7 +19,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: cipher-3des1.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 #include <string.h>
 #include <openssl/evp.h>
@@ -65,7 +64,7 @@ ssh1_3des_init(EVP_CIPHER_CTX *ctx, const u_char *key, const u_char *iv,
 		return 1;
 	if (enc == -1)
 		enc = ctx->encrypt;
-	k1 = k2 = k3 = __UNCONST(key);
+	k1 = k2 = k3 = (u_char *) key;
 	k2 += 8;
 	if (EVP_CIPHER_CTX_key_length(ctx) >= 16+8) {
 		if (enc)
@@ -94,7 +93,7 @@ ssh1_3des_cbc(EVP_CIPHER_CTX *ctx, u_char *dest, const u_char *src, size_t len)
 
 	if ((c = EVP_CIPHER_CTX_get_app_data(ctx)) == NULL)
 		return 0;
-	if (EVP_Cipher(&c->k1, dest, __UNCONST(src), len) == 0 ||
+	if (EVP_Cipher(&c->k1, dest, (u_char *)src, len) == 0 ||
 	    EVP_Cipher(&c->k2, dest, dest, len) == 0 ||
 	    EVP_Cipher(&c->k3, dest, dest, len) == 0)
 		return 0;

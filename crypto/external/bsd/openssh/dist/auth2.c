@@ -1,4 +1,3 @@
-/*	$NetBSD: auth2.c,v 1.11 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth2.c,v 1.135 2015/01/19 20:07:45 markus Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth2.c,v 1.11 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -51,13 +50,10 @@ __RCSID("$NetBSD: auth2.c,v 1.11 2015/04/03 23:58:19 christos Exp $");
 #include "dispatch.h"
 #include "pathnames.h"
 #include "buffer.h"
-#include "canohost.h"
-#include "pfilter.h"
 
 #ifdef GSSAPI
 #include "ssh-gss.h"
 #endif
-
 #include "monitor_wrap.h"
 
 /* import */
@@ -73,14 +69,9 @@ extern Authmethod method_pubkey;
 extern Authmethod method_passwd;
 extern Authmethod method_kbdint;
 extern Authmethod method_hostbased;
-#ifdef KRB5
-extern Authmethod method_kerberos;
-#endif
 #ifdef GSSAPI
 extern Authmethod method_gssapi;
 #endif
-
-static int log_flag = 0;
 
 Authmethod *authmethods[] = {
 	&method_none,
@@ -91,9 +82,6 @@ Authmethod *authmethods[] = {
 	&method_passwd,
 	&method_kbdint,
 	&method_hostbased,
-#ifdef KRB5
-	&method_kerberos,
-#endif
 	NULL
 };
 
@@ -145,7 +133,7 @@ auth2_read_banner(void)
 	return (banner);
 }
 
-static void
+void
 userauth_send_banner(const char *msg)
 {
 	if (datafellows & SSH_BUG_BANNER)
@@ -168,8 +156,8 @@ userauth_banner(void)
 
 	if ((banner = PRIVSEP(auth2_read_banner())) == NULL)
 		goto done;
-
 	userauth_send_banner(banner);
+
 done:
 	free(banner);
 }
@@ -236,11 +224,6 @@ input_userauth_request(int type, u_int32_t seq, void *ctxt)
 	service = packet_get_cstring(NULL);
 	method = packet_get_cstring(NULL);
 	debug("userauth-request for user %s service %s method %s", user, service, method);
-	if (!log_flag) {
-		logit("SSH: Server;Ltype: Authname;Remote: %s-%d;Name: %s", 
-		      get_remote_ipaddr(), get_remote_port(), user);
-		log_flag = 1;
-	}
 	debug("attempt %d failures %d", authctxt->attempt, authctxt->failures);
 
 	if ((style = strchr(user, ':')) != NULL)
@@ -256,7 +239,9 @@ input_userauth_request(int type, u_int32_t seq, void *ctxt)
 		} else {
 			logit("input_userauth_request: invalid user %s", user);
 			authctxt->pw = fakepw();
-			pfilter_notify(1);
+#ifdef SSH_AUDIT_EVENTS
+			PRIVSEP(audit_event(SSH_INVALID_USER));
+#endif
 		}
 #ifdef USE_PAM
 		if (options.use_pam)
@@ -325,21 +310,6 @@ userauth_finish(Authctxt *authctxt, int authenticated, const char *method,
 #endif
 	}
 
-#ifdef USE_PAM
-	if (options.use_pam && authenticated) {
-		if (!PRIVSEP(do_pam_account())) {
-			/* if PAM returned a message, send it to the user */
-			if (buffer_len(&loginmsg) > 0) {
-				buffer_append(&loginmsg, "\0", 1);
-				userauth_send_banner((const char *)buffer_ptr(&loginmsg));
-				packet_write_wait();
-			}
-			fatal("Access denied for user %s by PAM account "
-			   "configuration", authctxt->user);
-		}
-	}
-#endif
-
 	if (authenticated && options.num_auth_methods != 0) {
 		if (!auth2_update_methods_lists(authctxt, method, submethod)) {
 			authenticated = 0;
@@ -353,6 +323,28 @@ userauth_finish(Authctxt *authctxt, int authenticated, const char *method,
 	if (authctxt->postponed)
 		return;
 
+#ifdef USE_PAM
+	if (options.use_pam && authenticated) {
+		if (!PRIVSEP(do_pam_account())) {
+			/* if PAM returned a message, send it to the user */
+			if (buffer_len(&loginmsg) > 0) {
+				buffer_append(&loginmsg, "\0", 1);
+				userauth_send_banner(buffer_ptr(&loginmsg));
+				packet_write_wait();
+			}
+			fatal("Access denied for user %s by PAM account "
+			    "configuration", authctxt->user);
+		}
+	}
+#endif
+
+#ifdef _UNICOS
+	if (authenticated && cray_access_denied(authctxt->user)) {
+		authenticated = 0;
+		fatal("Access denied for user %s.", authctxt->user);
+	}
+#endif /* _UNICOS */
+
 	if (authenticated == 1) {
 		/* turn off userauth */
 		dispatch_set(SSH2_MSG_USERAUTH_REQUEST, &dispatch_protocol_ignore);
@@ -362,12 +354,17 @@ userauth_finish(Authctxt *authctxt, int authenticated, const char *method,
 		/* now we can break out */
 		authctxt->success = 1;
 	} else {
+
 		/* Allow initial try of "none" auth without failure penalty */
 		if (!partial && !authctxt->server_caused_failure &&
 		    (authctxt->attempt > 1 || strcmp(method, "none") != 0))
 			authctxt->failures++;
-		if (authctxt->failures >= options.max_authtries)
+		if (authctxt->failures >= options.max_authtries) {
+#ifdef SSH_AUDIT_EVENTS
+			PRIVSEP(audit_event(SSH_LOGIN_EXCEED_MAXTRIES));
+#endif
 			auth_maxtries_exceeded(authctxt);
+		}
 		methods = authmethods_get(authctxt);
 		debug3("%s: failure partial=%d next methods=\"%s\"", __func__,
 		    partial, methods);
@@ -428,7 +425,7 @@ authmethods_get(Authctxt *authctxt)
 		    strlen(authmethods[i]->name));
 	}
 	buffer_append(&b, "\0", 1);
-	list = xstrdup((const char *)buffer_ptr(&b));
+	list = xstrdup(buffer_ptr(&b));
 	buffer_free(&b);
 	return list;
 }

@@ -1,4 +1,3 @@
-/*	$NetBSD: auth.c,v 1.15 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: auth.c,v 1.113 2015/08/21 03:42:19 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -25,16 +24,27 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth.c,v 1.15 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include <netinet/in.h>
+
 #include <errno.h>
 #include <fcntl.h>
-#include <libgen.h>
-#include <login_cap.h>
-#include <paths.h>
+#ifdef HAVE_PATHS_H
+# include <paths.h>
+#endif
 #include <pwd.h>
+#ifdef HAVE_LOGIN_H
+#include <login.h>
+#endif
+#ifdef USE_SHADOW
+#include <shadow.h>
+#endif
+#ifdef HAVE_LIBGEN_H
+#include <libgen.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -55,6 +65,7 @@ __RCSID("$NetBSD: auth.c,v 1.15 2015/08/21 08:20:59 christos Exp $");
 #include "canohost.h"
 #include "uidswap.h"
 #include "packet.h"
+#include "loginrec.h"
 #ifdef GSSAPI
 #include "ssh-gss.h"
 #endif
@@ -63,15 +74,12 @@ __RCSID("$NetBSD: auth.c,v 1.15 2015/08/21 08:20:59 christos Exp $");
 #include "authfile.h"
 #include "ssherr.h"
 #include "compat.h"
-#include "pfilter.h"
-
-#ifdef HAVE_LOGIN_CAP
-#include <login_cap.h>
-#endif
 
 /* import */
 extern ServerOptions options;
 extern int use_privsep;
+extern Buffer loginmsg;
+extern struct passwd *privsep_pw;
 
 /* Debugging messages */
 Buffer auth_debug;
@@ -89,131 +97,67 @@ int auth_debug_init;
 int
 allowed_user(struct passwd * pw)
 {
-#ifdef HAVE_LOGIN_CAP
-	extern login_cap_t *lc;
-	int match_name, match_ip;
-	char *cap_hlist, *hp;
-#endif
 	struct stat st;
-	const char *hostname = NULL, *ipaddr = NULL;
+	const char *hostname = NULL, *ipaddr = NULL, *passwd = NULL;
 	u_int i;
+#ifdef USE_SHADOW
+	struct spwd *spw = NULL;
+#endif
 
 	/* Shouldn't be called if pw is NULL, but better safe than sorry... */
 	if (!pw || !pw->pw_name)
 		return 0;
 
-#ifdef HAVE_LOGIN_CAP
-	hostname = get_canonical_hostname(options.use_dns);
-	ipaddr = get_remote_ipaddr();
+#ifdef USE_SHADOW
+	if (!options.use_pam)
+		spw = getspnam(pw->pw_name);
+#ifdef HAS_SHADOW_EXPIRE
+	if (!options.use_pam && spw != NULL && auth_shadow_acctexpired(spw))
+		return 0;
+#endif /* HAS_SHADOW_EXPIRE */
+#endif /* USE_SHADOW */
 
-	lc = login_getclass(pw->pw_class);
-
-	/*
-	 * Check the deny list.
-	 */
-	cap_hlist = login_getcapstr(lc, "host.deny", NULL, NULL);
-	if (cap_hlist != NULL) {
-		hp = strtok(cap_hlist, ",");
-		while (hp != NULL) {
-			match_name = match_hostname(hostname, hp);
-			match_ip = match_hostname(ipaddr, hp);
-			/*
-			 * Only a positive match here causes a "deny".
-			 */
-			if (match_name > 0 || match_ip > 0) {
-				free(cap_hlist);
-				login_close(lc);
-				return 0;
-			}
-			hp = strtok(NULL, ",");
-		}
-		free(cap_hlist);
-	}
-
-	/*
-	 * Check the allow list.  If the allow list exists, and the
-	 * remote host is not in it, the user is implicitly denied.
-	 */
-	cap_hlist = login_getcapstr(lc, "host.allow", NULL, NULL);
-	if (cap_hlist != NULL) {
-		hp = strtok(cap_hlist, ",");
-		if (hp == NULL) {
-			/* Just in case there's an empty string... */
-			free(cap_hlist);
-			login_close(lc);
-			return 0;
-		}
-		while (hp != NULL) {
-			match_name = match_hostname(hostname, hp);
-			match_ip = match_hostname(ipaddr, hp);
-			/*
-			 * Negative match causes an immediate "deny".
-			 * Positive match causes us to break out
-			 * of the loop (allowing a fallthrough).
-			 */
-			if (match_name < 0 || match_ip < 0) {
-				free(cap_hlist);
-				login_close(lc);
-				return 0;
-			}
-			if (match_name > 0 || match_ip > 0)
-				break;
-			hp = strtok(NULL, ",");
-		}
-		free(cap_hlist);
-		if (hp == NULL) {
-			login_close(lc);
-			return 0;
-		}
-	}
-
-	login_close(lc);
+	/* grab passwd field for locked account check */
+	passwd = pw->pw_passwd;
+#ifdef USE_SHADOW
+	if (spw != NULL)
+#ifdef USE_LIBIAF
+		passwd = get_iaf_password(pw);
+#else
+		passwd = spw->sp_pwdp;
+#endif /* USE_LIBIAF */
 #endif
 
-#ifdef USE_PAM
-	if (!options.use_pam) {
-#endif
-	/*
-	 * password/account expiration.
-	 */
-	if (pw->pw_change || pw->pw_expire) {
-		struct timeval tv;
+	/* check for locked account */
+	if (!options.use_pam && passwd && *passwd) {
+		int locked = 0;
 
-		(void)gettimeofday(&tv, (struct timezone *)NULL);
-		if (pw->pw_expire) {
-			if (tv.tv_sec >= pw->pw_expire) {
-				logit("User %.100s not allowed because account has expired",
-				    pw->pw_name);
-				return 0;	/* expired */
-			}
-		}
-#ifdef _PASSWORD_CHGNOW
-		if (pw->pw_change == _PASSWORD_CHGNOW) {
-			logit("User %.100s not allowed because password needs to be changed",
+#ifdef LOCKED_PASSWD_STRING
+		if (strcmp(passwd, LOCKED_PASSWD_STRING) == 0)
+			 locked = 1;
+#endif
+#ifdef LOCKED_PASSWD_PREFIX
+		if (strncmp(passwd, LOCKED_PASSWD_PREFIX,
+		    strlen(LOCKED_PASSWD_PREFIX)) == 0)
+			 locked = 1;
+#endif
+#ifdef LOCKED_PASSWD_SUBSTR
+		if (strstr(passwd, LOCKED_PASSWD_SUBSTR))
+			locked = 1;
+#endif
+#ifdef USE_LIBIAF
+		free((void *) passwd);
+#endif /* USE_LIBIAF */
+		if (locked) {
+			logit("User %.100s not allowed because account is locked",
 			    pw->pw_name);
-
-			return 0;	/* can't force password change (yet) */
-		}
-#endif
-		if (pw->pw_change) {
-			if (tv.tv_sec >= pw->pw_change) {
-				logit("User %.100s not allowed because password has expired",
-				    pw->pw_name);
-				return 0;	/* expired */
-			}
+			return 0;
 		}
 	}
-#ifdef USE_PAM
-	}
-#endif
 
 	/*
 	 * Deny if shell does not exist or is not executable unless we
 	 * are chrooting.
-	 */
-	/*
-	 * XXX Should check to see if it is executable by the
-	 * XXX requesting user.  --thorpej
 	 */
 	if (options.chroot_directory == NULL ||
 	    strcasecmp(options.chroot_directory, "none") == 0) {
@@ -235,11 +179,6 @@ allowed_user(struct passwd * pw)
 		}
 		free(shell);
 	}
-	/*
-	 * XXX Consider nuking {Allow,Deny}{Users,Groups}.  We have the
-	 * XXX login_cap(3) mechanism which covers all other types of
-	 * XXX logins, too.
-	 */
 
 	if (options.num_deny_users > 0 || options.num_allow_users > 0 ||
 	    options.num_deny_groups > 0 || options.num_allow_groups > 0) {
@@ -304,6 +243,12 @@ allowed_user(struct passwd * pw)
 			}
 		ga_free();
 	}
+
+#ifdef CUSTOM_SYS_AUTH_ALLOWED_USER
+	if (!sys_auth_allowed_user(pw, &loginmsg))
+		return 0;
+#endif
+
 	/* We found no reason not to let this user try to log on... */
 	return 1;
 }
@@ -330,7 +275,7 @@ auth_log(Authctxt *authctxt, int authenticated, int partial,
     const char *method, const char *submethod)
 {
 	void (*authlog) (const char *fmt,...) = verbose;
-	const char *authmsg;
+	char *authmsg;
 
 	if (use_privsep && !mm_is_monitor() && !authctxt->postponed)
 		return;
@@ -360,11 +305,28 @@ auth_log(Authctxt *authctxt, int authenticated, int partial,
 	    compat20 ? "ssh2" : "ssh1",
 	    authctxt->info != NULL ? ": " : "",
 	    authctxt->info != NULL ? authctxt->info : "");
-	if (!authctxt->postponed)
-		pfilter_notify(!authenticated);
 	free(authctxt->info);
 	authctxt->info = NULL;
+
+#ifdef CUSTOM_FAILED_LOGIN
+	if (authenticated == 0 && !authctxt->postponed &&
+	    (strcmp(method, "password") == 0 ||
+	    strncmp(method, "keyboard-interactive", 20) == 0 ||
+	    strcmp(method, "challenge-response") == 0))
+		record_failed_login(authctxt->user,
+		    get_canonical_hostname(options.use_dns), "ssh");
+# ifdef WITH_AIXAUTHENTICATE
+	if (authenticated)
+		sys_auth_record_login(authctxt->user,
+		    get_canonical_hostname(options.use_dns), "ssh", &loginmsg);
+# endif
+#endif
+#ifdef SSH_AUDIT_EVENTS
+	if (authenticated == 0 && !authctxt->postponed)
+		audit_event(audit_classify_auth(method));
+#endif
 }
+
 
 void
 auth_maxtries_exceeded(Authctxt *authctxt)
@@ -525,7 +487,7 @@ auth_secure_path(const char *name, struct stat *stp, const char *pw_dir,
 		snprintf(err, errlen, "%s is not a regular file", buf);
 		return -1;
 	}
-	if ((stp->st_uid != 0 && stp->st_uid != uid) ||
+	if ((!platform_sys_dir_uid(stp->st_uid) && stp->st_uid != uid) ||
 	    (stp->st_mode & 022) != 0) {
 		snprintf(err, errlen, "bad ownership or modes for file %s",
 		    buf);
@@ -541,7 +503,7 @@ auth_secure_path(const char *name, struct stat *stp, const char *pw_dir,
 		strlcpy(buf, cp, sizeof(buf));
 
 		if (stat(buf, &st) < 0 ||
-		    (st.st_uid != 0 && st.st_uid != uid) ||
+		    (!platform_sys_dir_uid(st.st_uid) && st.st_uid != uid) ||
 		    (st.st_mode & 022) != 0) {
 			snprintf(err, errlen,
 			    "bad ownership or modes for directory %s", buf);
@@ -585,7 +547,7 @@ secure_filename(FILE *f, const char *file, struct passwd *pw,
 
 static FILE *
 auth_openfile(const char *file, struct passwd *pw, int strict_modes,
-    int log_missing, const char *file_type)
+    int log_missing, char *file_type)
 {
 	char line[1024];
 	struct stat st;
@@ -643,9 +605,9 @@ struct passwd *
 getpwnamallow(const char *user)
 {
 #ifdef HAVE_LOGIN_CAP
- 	extern login_cap_t *lc;
+	extern login_cap_t *lc;
 #ifdef BSD_AUTH
- 	auth_session_t *as;
+	auth_session_t *as;
 #endif
 #endif
 	struct passwd *pw;
@@ -654,10 +616,38 @@ getpwnamallow(const char *user)
 	ci->user = user;
 	parse_server_match_config(&options, ci);
 
+#if defined(_AIX) && defined(HAVE_SETAUTHDB)
+	aix_setauthdb(user);
+#endif
+
 	pw = getpwnam(user);
+
+#if defined(_AIX) && defined(HAVE_SETAUTHDB)
+	aix_restoreauthdb();
+#endif
+#ifdef HAVE_CYGWIN
+	/*
+	 * Windows usernames are case-insensitive.  To avoid later problems
+	 * when trying to match the username, the user is only allowed to
+	 * login if the username is given in the same case as stored in the
+	 * user database.
+	 */
+	if (pw != NULL && strcmp(user, pw->pw_name) != 0) {
+		logit("Login name %.100s does not match stored username %.100s",
+		    user, pw->pw_name);
+		pw = NULL;
+	}
+#endif
 	if (pw == NULL) {
 		logit("Invalid user %.100s from %.100s",
 		    user, get_remote_ipaddr());
+#ifdef CUSTOM_FAILED_LOGIN
+		record_failed_login(user,
+		    get_canonical_hostname(options.use_dns), "ssh");
+#endif
+#ifdef SSH_AUDIT_EVENTS
+		audit_event(SSH_INVALID_USER);
+#endif /* SSH_AUDIT_EVENTS */
 		return (NULL);
 	}
 	if (!allowed_user(pw))
@@ -765,19 +755,21 @@ struct passwd *
 fakepw(void)
 {
 	static struct passwd fake;
-	static char nouser[] = "NOUSER";
-	static char nonexist[] = "/nonexist";
 
 	memset(&fake, 0, sizeof(fake));
-	fake.pw_name = nouser;
-	fake.pw_passwd = __UNCONST(
-	    "$2a$06$r3.juUaHZDlIbQaO2dS9FuYxL1W9M81R1Tc92PoSNmzvpEqLkLGrK");
-	fake.pw_gecos = nouser;
-	fake.pw_uid = (uid_t)-1;
-	fake.pw_gid = (gid_t)-1;
-	fake.pw_class = __UNCONST("");
-	fake.pw_dir = nonexist;
-	fake.pw_shell = nonexist;
+	fake.pw_name = "NOUSER";
+	fake.pw_passwd =
+	    "$2a$06$r3.juUaHZDlIbQaO2dS9FuYxL1W9M81R1Tc92PoSNmzvpEqLkLGrK";
+#ifdef HAVE_STRUCT_PASSWD_PW_GECOS
+	fake.pw_gecos = "NOUSER";
+#endif
+	fake.pw_uid = privsep_pw == NULL ? (uid_t)-1 : privsep_pw->pw_uid;
+	fake.pw_gid = privsep_pw == NULL ? (gid_t)-1 : privsep_pw->pw_gid;
+#ifdef HAVE_STRUCT_PASSWD_PW_CLASS
+	fake.pw_class = "";
+#endif
+	fake.pw_dir = "/nonexist";
+	fake.pw_shell = "/nonexist";
 
 	return (&fake);
 }

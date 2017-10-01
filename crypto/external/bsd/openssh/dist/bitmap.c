@@ -1,4 +1,3 @@
-/*	$NetBSD: bitmap.c,v 1.2 2015/04/03 23:58:19 christos Exp $	*/
 /*
  * Copyright (c) 2015 Damien Miller <djm@mindrot.org>
  *
@@ -14,8 +13,8 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: bitmap.c,v 1.2 2015/04/03 23:58:19 christos Exp $");
 
 #include <sys/types.h>
 #include <string.h>
@@ -189,7 +188,7 @@ bitmap_from_string(struct bitmap *b, const void *p, size_t l)
 {
 	int r;
 	size_t i, offset, shift;
-	const u_char *s = p;
+	u_char *s = (u_char *)p;
 
 	if (l > BITMAP_MAX / 8)
 		return -1;

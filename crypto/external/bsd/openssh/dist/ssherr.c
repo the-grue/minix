@@ -14,11 +14,8 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-#include "includes.h"
-__RCSID("$NetBSD: ssherr.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include <errno.h>
-#include <stdio.h>
 #include <string.h>
 #include "ssherr.h"
 
@@ -139,10 +136,6 @@ ssh_err(int n)
 	case SSH_ERR_PROTOCOL_ERROR:
 		return "Protocol error";
 	default:
-		{
-			static char buf[1024];
-			snprintf(buf, sizeof(buf), "unknown error %d", n);
-			return buf;
-		}
+		return "unknown error";
 	}
 }

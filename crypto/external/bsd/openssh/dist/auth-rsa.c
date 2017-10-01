@@ -1,4 +1,3 @@
-/*	$NetBSD: auth-rsa.c,v 1.10 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth-rsa.c,v 1.90 2015/01/28 22:36:00 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -16,7 +15,9 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth-rsa.c,v 1.10 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_SSH1
+
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -24,6 +25,7 @@ __RCSID("$NetBSD: auth-rsa.c,v 1.10 2015/04/03 23:58:19 christos Exp $");
 
 #include <pwd.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include "xmalloc.h"
@@ -170,8 +172,7 @@ rsa_key_allowed_in_file(struct passwd *pw, char *file,
     const BIGNUM *client_n, Key **rkey)
 {
 	char *fp, line[SSH_MAX_PUBKEY_BYTES];
-	int allowed = 0;
-	u_int bits;
+	int allowed = 0, bits;
 	FILE *f;
 	u_long linenum = 0;
 	Key *key;
@@ -232,7 +233,7 @@ rsa_key_allowed_in_file(struct passwd *pw, char *file,
 
 		/* check the real bits  */
 		keybits = BN_num_bits(key->rsa->n);
-		if (keybits < 0 || bits != (u_int)keybits)
+		if (keybits < 0 || bits != keybits)
 			logit("Warning: %s, line %lu: keysize mismatch: "
 			    "actual %d vs. announced %d.",
 			    file, linenum, BN_num_bits(key->rsa->n), bits);
@@ -284,93 +285,8 @@ auth_rsa_key_allowed(struct passwd *pw, BIGNUM *client_n, Key **rkey)
 {
 	char *file;
 	u_int i, allowed = 0;
- 
+
 	temporarily_use_uid(pw);
-
-#ifdef WITH_LDAP_PUBKEY
-	if (options.lpk.on) {
-	    u_int bits;
-	    ldap_key_t *k;
-	    /* here is the job */
-	    Key *key = key_new(KEY_RSA1);
-
-	    debug("[LDAP] trying LDAP first uid=%s", pw->pw_name);
-	    if ( ldap_ismember(&options.lpk, pw->pw_name) > 0) {
-		if ( (k = ldap_getuserkey(&options.lpk, pw->pw_name)) != NULL) {
-		    for (i = 0 ; i < k->num ; i++) {
-			char *cp, *xoptions = NULL;
-
-			for (cp = k->keys[i]->bv_val; *cp == ' ' || *cp == '\t'; cp++)
-			    ;
-			if (!*cp || *cp == '\n' || *cp == '#')
-			    continue;
-
-			/*
-			* Check if there are options for this key, and if so,
-			* save their starting address and skip the option part
-			* for now.  If there are no options, set the starting
-			* address to NULL.
-			 */
-			if (*cp < '0' || *cp > '9') {
-			    int quoted = 0;
-			    xoptions = cp;
-			    for (; *cp && (quoted || (*cp != ' ' && *cp != '\t')); cp++) {
-				if (*cp == '\\' && cp[1] == '"')
-				    cp++;	/* Skip both */
-				else if (*cp == '"')
-				    quoted = !quoted;
-			    }
-			} else
-			    xoptions = NULL;
-
-			/* Parse the key from the line. */
-			if (hostfile_read_key(&cp, &bits, key) == 0) {
-			    debug("[LDAP] line %d: non ssh1 key syntax", i);
-			    continue;
-			}
-			/* cp now points to the comment part. */
-
-			/* Check if the we have found the desired key (identified by its modulus). */
-			if (BN_cmp(key->rsa->n, client_n) != 0)
-			    continue;
-
-			/* check the real bits  */
-			if (bits != (unsigned int)BN_num_bits(key->rsa->n))
-			    logit("[LDAP] Warning: ldap, line %lu: keysize mismatch: "
-				    "actual %d vs. announced %d.", (unsigned long)i, BN_num_bits(key->rsa->n), bits);
-
-			/* We have found the desired key. */
-			/*
-			* If our options do not allow this key to be used,
-			* do not send challenge.
-			 */
-			if (!auth_parse_options(pw, xoptions, "[LDAP]", (unsigned long) i))
-			    continue;
-
-			/* break out, this key is allowed */
-			allowed = 1;
-
-			/* add the return stuff etc... */
-			/* Restore the privileged uid. */
-			restore_uid();
-
-			/* return key if allowed */
-			if (allowed && rkey != NULL)
-			    *rkey = key;
-			else
-			    key_free(key);
-
-			ldap_keys_free(k);
-			return (allowed);
-		    }
-		} else {
-		    logit("[LDAP] no keys found for '%s'!", pw->pw_name);
-		}
-	    } else {
-		logit("[LDAP] '%s' is not in '%s'", pw->pw_name, options.lpk.sgroup);
-	    }
-	}
-#endif
 
 	for (i = 0; !allowed && i < options.num_authkeys_files; i++) {
 		if (strcasecmp(options.authorized_keys_files[i], "none") == 0)
@@ -429,3 +345,5 @@ auth_rsa(Authctxt *authctxt, BIGNUM *client_n)
 	packet_send_debug("RSA authentication accepted.");
 	return (1);
 }
+
+#endif /* WITH_SSH1 */

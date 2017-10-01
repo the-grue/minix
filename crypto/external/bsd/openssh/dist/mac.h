@@ -1,4 +1,3 @@
-/*	$NetBSD: mac.h,v 1.5 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: mac.h,v 1.9 2015/01/13 19:31:40 markus Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.

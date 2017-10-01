@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh_api.c,v 1.2 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ssh_api.c,v 1.4 2015/02/16 22:13:32 djm Exp $ */
 /*
  * Copyright (c) 2012 Markus Friedl.  All rights reserved.
@@ -17,7 +16,6 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh_api.c,v 1.2 2015/04/03 23:58:19 christos Exp $");
 
 #include "ssh1.h" /* For SSH_MSG_NONE */
 #include "ssh_api.h"
@@ -76,14 +74,16 @@ mm_choose_dh(int min, int nbits, int max)
 int
 ssh_init(struct ssh **sshp, int is_server, struct kex_params *kex_params)
 {
-        const char *myproposal[PROPOSAL_MAX] = { KEX_CLIENT };
+        char *myproposal[PROPOSAL_MAX] = { KEX_CLIENT };
 	struct ssh *ssh;
-	const char **proposal;
+	char **proposal;
 	static int called;
 	int r;
 
 	if (!called) {
+#ifdef WITH_OPENSSL
 		OpenSSL_add_all_algorithms();
+#endif /* WITH_OPENSSL */
 		called = 1;
 	}
 
@@ -93,7 +93,7 @@ ssh_init(struct ssh **sshp, int is_server, struct kex_params *kex_params)
 		ssh_packet_set_server(ssh);
 
 	/* Initialize key exchange */
-	proposal = kex_params ? (const char **)(void *)kex_params->proposal : myproposal;
+	proposal = kex_params ? kex_params->proposal : myproposal;
 	if ((r = kex_new(ssh, proposal, &ssh->kex)) != 0) {
 		ssh_free(ssh);
 		return r;
@@ -105,7 +105,9 @@ ssh_init(struct ssh **sshp, int is_server, struct kex_params *kex_params)
 		ssh->kex->kex[KEX_DH_GRP14_SHA1] = kexdh_server;
 		ssh->kex->kex[KEX_DH_GEX_SHA1] = kexgex_server;
 		ssh->kex->kex[KEX_DH_GEX_SHA256] = kexgex_server;
+# ifdef OPENSSL_HAS_ECC
 		ssh->kex->kex[KEX_ECDH_SHA2] = kexecdh_server;
+# endif
 #endif /* WITH_OPENSSL */
 		ssh->kex->kex[KEX_C25519_SHA256] = kexc25519_server;
 		ssh->kex->load_host_public_key=&_ssh_host_public_key;
@@ -117,7 +119,9 @@ ssh_init(struct ssh **sshp, int is_server, struct kex_params *kex_params)
 		ssh->kex->kex[KEX_DH_GRP14_SHA1] = kexdh_client;
 		ssh->kex->kex[KEX_DH_GEX_SHA1] = kexgex_client;
 		ssh->kex->kex[KEX_DH_GEX_SHA256] = kexgex_client;
+# ifdef OPENSSL_HAS_ECC
 		ssh->kex->kex[KEX_ECDH_SHA2] = kexecdh_client;
+# endif
 #endif /* WITH_OPENSSL */
 		ssh->kex->kex[KEX_C25519_SHA256] = kexc25519_client;
 		ssh->kex->verify_host_key =&_ssh_verify_host_key;
@@ -515,7 +519,7 @@ _ssh_order_hostkeyalgs(struct ssh *ssh)
 		free(orig);
 		proposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = replace;
 		replace = NULL;	/* owned by proposal */
-		r = kex_prop2buf(ssh->kex->my, (const char **)(void *)proposal);
+		r = kex_prop2buf(ssh->kex->my, proposal);
 	}
  out:
 	free(oavail);

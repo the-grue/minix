@@ -1,4 +1,3 @@
-/*	$NetBSD: auth2-hostbased.c,v 1.8 2015/07/03 00:59:59 christos Exp $	*/
 /* $OpenBSD: auth2-hostbased.c,v 1.25 2015/05/04 06:10:48 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth2-hostbased.c,v 1.8 2015/07/03 00:59:59 christos Exp $");
+
 #include <sys/types.h>
 
 #include <pwd.h>
@@ -116,7 +115,7 @@ userauth_hostbased(Authctxt *authctxt)
 		goto done;
 	}
 
-	service = datafellows & SSH_BUG_HBSERVICE ? __UNCONST("ssh-userauth") :
+	service = datafellows & SSH_BUG_HBSERVICE ? "ssh-userauth" :
 	    authctxt->service;
 	buffer_init(&b);
 	buffer_put_string(&b, session_id2, session_id2_len);

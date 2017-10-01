@@ -1,4 +1,3 @@
-/*	$NetBSD: kexc25519s.c,v 1.4 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: kexc25519s.c,v 1.9 2015/04/27 00:37:53 dtucker Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -24,8 +23,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: kexc25519s.c,v 1.4 2015/07/03 01:00:00 christos Exp $");
 
 #include <sys/types.h>
 #include <stdio.h>
@@ -114,8 +113,8 @@ input_kex_c25519_init(int type, u_int32_t seq, void *ctxt)
 	    kex->hash_alg,
 	    kex->client_version_string,
 	    kex->server_version_string,
-	    (const char *)sshbuf_ptr(kex->peer), sshbuf_len(kex->peer),
-	    (const char *)sshbuf_ptr(kex->my), sshbuf_len(kex->my),
+	    sshbuf_ptr(kex->peer), sshbuf_len(kex->peer),
+	    sshbuf_ptr(kex->my), sshbuf_len(kex->my),
 	    server_host_key_blob, sbloblen,
 	    client_pubkey,
 	    server_pubkey,

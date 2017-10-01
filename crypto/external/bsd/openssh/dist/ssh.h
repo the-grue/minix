@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh.h,v 1.6 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: ssh.h,v 1.81 2015/08/04 05:23:06 djm Exp $ */
 
 /*
@@ -84,15 +83,14 @@
 /* Used to identify ``EscapeChar none'' */
 #define SSH_ESCAPECHAR_NONE		-2
 
-/* Name of Kerberos service for SSH to use. */
-#define KRB4_SERVICE_NAME		"rcmd"
-
 /*
  * unprivileged user when UsePrivilegeSeparation=yes;
  * sshd will change its privileges to this user and its
  * primary group.
  */
+#ifndef SSH_PRIVSEP_USER
 #define SSH_PRIVSEP_USER		"sshd"
+#endif
 
 /* Minimum modulus size (n) for RSA keys. */
 #define SSH_RSA_MINIMUM_MODULUS_SIZE	768

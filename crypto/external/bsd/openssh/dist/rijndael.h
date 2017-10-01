@@ -41,4 +41,16 @@ int	rijndaelKeySetupEnc(unsigned int [], const unsigned char [], int);
 void	rijndaelEncrypt(const unsigned int [], int, const unsigned char [],
 	    unsigned char []);
 
+/*  The structure for key information */
+typedef struct {
+	int	decrypt;
+	int	Nr;		/* key-length-dependent number of rounds */
+	u32	ek[4*(AES_MAXROUNDS + 1)];	/* encrypt key schedule */
+	u32	dk[4*(AES_MAXROUNDS + 1)];	/* decrypt key schedule */
+} rijndael_ctx;
+
+void	 rijndael_set_key(rijndael_ctx *, u_char *, int, int);
+void	 rijndael_decrypt(rijndael_ctx *, u_char *, u_char *);
+void	 rijndael_encrypt(rijndael_ctx *, u_char *, u_char *);
+
 #endif /* _PRIVATE_RIJNDAEL_H */

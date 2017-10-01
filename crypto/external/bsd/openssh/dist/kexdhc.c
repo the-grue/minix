@@ -1,4 +1,3 @@
-/*	$NetBSD: kexdhc.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: kexdhc.c,v 1.18 2015/01/26 06:10:03 djm Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -25,11 +24,14 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: kexdhc.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_OPENSSL
+
 #include <sys/types.h>
 
 #include <openssl/dh.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
@@ -207,3 +209,4 @@ input_kex_dh(int type, u_int32_t seq, void *ctxt)
 	free(signature);
 	return r;
 }
+#endif /* WITH_OPENSSL */

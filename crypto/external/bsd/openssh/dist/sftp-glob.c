@@ -1,4 +1,3 @@
-/*	$NetBSD: sftp-glob.c,v 1.8 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: sftp-glob.c,v 1.27 2015/01/14 13:54:13 djm Exp $ */
 /*
  * Copyright (c) 2001-2004 Damien Miller <djm@openbsd.org>
@@ -17,12 +16,13 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: sftp-glob.c,v 1.8 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
-#include <sys/stat.h>
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
 
 #include <dirent.h>
-#include <glob.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdlib.h>
@@ -51,7 +51,7 @@ fudge_opendir(const char *path)
 
 	r = xcalloc(1, sizeof(*r));
 
-	if (do_readdir(cur.conn, __UNCONST(path), &r->dir)) {
+	if (do_readdir(cur.conn, (char *)path, &r->dir)) {
 		free(r);
 		return(NULL);
 	}
@@ -64,16 +64,40 @@ fudge_opendir(const char *path)
 static struct dirent *
 fudge_readdir(struct SFTP_OPENDIR *od)
 {
-	static struct dirent ret;
+	/* Solaris needs sizeof(dirent) + path length (see below) */
+	static char buf[sizeof(struct dirent) + MAXPATHLEN];
+	struct dirent *ret = (struct dirent *)buf;
+#ifdef __GNU_LIBRARY__
+	static int inum = 1;
+#endif /* __GNU_LIBRARY__ */
 
 	if (od->dir[od->offset] == NULL)
 		return(NULL);
 
-	memset(&ret, 0, sizeof(ret));
-	strlcpy(ret.d_name, od->dir[od->offset++]->filename,
-	    sizeof(ret.d_name));
+	memset(buf, 0, sizeof(buf));
 
-	return(&ret);
+	/*
+	 * Solaris defines dirent->d_name as a one byte array and expects
+	 * you to hack around it.
+	 */
+#ifdef BROKEN_ONE_BYTE_DIRENT_D_NAME
+	strlcpy(ret->d_name, od->dir[od->offset++]->filename, MAXPATHLEN);
+#else
+	strlcpy(ret->d_name, od->dir[od->offset++]->filename,
+	    sizeof(ret->d_name));
+#endif
+#ifdef __GNU_LIBRARY__
+	/*
+	 * Idiot glibc uses extensions to struct dirent for readdir with
+	 * ALTDIRFUNCs. Not that this is documented anywhere but the
+	 * source... Fake an inode number to appease it.
+	 */
+	ret->d_ino = inum++;
+	if (!inum)
+		inum = 1;
+#endif /* __GNU_LIBRARY__ */
+
+	return(ret);
 }
 
 static void
@@ -88,7 +112,7 @@ fudge_lstat(const char *path, struct stat *st)
 {
 	Attrib *a;
 
-	if (!(a = do_lstat(cur.conn, path, 1)))
+	if (!(a = do_lstat(cur.conn, (char *)path, 1)))
 		return(-1);
 
 	attrib_to_stat(a, st);
@@ -101,7 +125,7 @@ fudge_stat(const char *path, struct stat *st)
 {
 	Attrib *a;
 
-	if (!(a = do_stat(cur.conn, path, 1)))
+	if (!(a = do_stat(cur.conn, (char *)path, 1)))
 		return(-1);
 
 	attrib_to_stat(a, st);
@@ -122,5 +146,5 @@ remote_glob(struct sftp_conn *conn, const char *pattern, int flags,
 	memset(&cur, 0, sizeof(cur));
 	cur.conn = conn;
 
-	return(glob(pattern, flags|GLOB_ALTDIRFUNC|GLOB_LIMIT, errfunc, pglob));
+	return(glob(pattern, flags | GLOB_ALTDIRFUNC, errfunc, pglob));
 }

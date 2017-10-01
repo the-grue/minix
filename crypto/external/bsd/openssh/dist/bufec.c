@@ -1,4 +1,3 @@
-/*	$NetBSD: bufec.c,v 1.5 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: bufec.c,v 1.4 2014/04/30 05:29:56 djm Exp $ */
 
 /*
@@ -16,17 +15,18 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-#include "includes.h"
-__RCSID("$NetBSD: bufec.c,v 1.5 2015/04/03 23:58:19 christos Exp $");
-#include <sys/types.h>
 
 /* Emulation wrappers for legacy OpenSSH buffer API atop sshbuf */
+
+#include "includes.h"
 
 #include <sys/types.h>
 
 #include "buffer.h"
 #include "log.h"
 #include "ssherr.h"
+
+#ifdef OPENSSL_HAS_ECC
 
 int
 buffer_put_ecpoint_ret(Buffer *buffer, const EC_GROUP *curve,
@@ -70,4 +70,5 @@ buffer_get_ecpoint(Buffer *buffer, const EC_GROUP *curve,
 		fatal("%s: buffer error", __func__);
 }
 
+#endif /* OPENSSL_HAS_ECC */
 

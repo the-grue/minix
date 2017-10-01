@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-pkcs11.c,v 1.9 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: ssh-pkcs11.c,v 1.21 2015/07/18 08:02:17 djm Exp $ */
 /*
  * Copyright (c) 2010 Markus Friedl.  All rights reserved.
@@ -15,17 +14,22 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: ssh-pkcs11.c,v 1.9 2015/08/13 10:33:21 christos Exp $");
+
+#ifdef ENABLE_PKCS11
 
 #include <sys/types.h>
-#include <sys/queue.h>
-#include <sys/time.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 
 #include <string.h>
 #include <dlfcn.h>
+
+#include "openbsd-compat/sys-queue.h"
 
 #include <openssl/x509.h>
 
@@ -104,9 +108,7 @@ pkcs11_provider_finalize(struct pkcs11_provider *p)
 		error("C_Finalize failed: %lu", rv);
 	p->valid = 0;
 	p->function_list = NULL;
-#ifdef HAVE_DLOPEN
 	dlclose(p->handle);
-#endif
 }
 
 /*
@@ -168,7 +170,6 @@ pkcs11_del_provider(char *provider_id)
 	return (-1);
 }
 
-#ifdef HAVE_DLOPEN
 /* openssl callback for freeing an RSA key */
 static int
 pkcs11_rsa_finish(RSA *rsa)
@@ -226,18 +227,21 @@ pkcs11_rsa_private_encrypt(int flen, const u_char *from, u_char *to, RSA *rsa,
 	CK_OBJECT_HANDLE	obj;
 	CK_ULONG		tlen = 0;
 	CK_RV			rv;
-	CK_OBJECT_CLASS		private_key_class = CKO_PRIVATE_KEY;
+	CK_OBJECT_CLASS	private_key_class = CKO_PRIVATE_KEY;
 	CK_BBOOL		true_val = CK_TRUE;
 	CK_MECHANISM		mech = {
 		CKM_RSA_PKCS, NULL_PTR, 0
 	};
 	CK_ATTRIBUTE		key_filter[] = {
-		{CKA_CLASS, &private_key_class, sizeof(private_key_class) },
+		{CKA_CLASS, NULL, sizeof(private_key_class) },
 		{CKA_ID, NULL, 0},
-		{CKA_SIGN, &true_val, sizeof(true_val) }
+		{CKA_SIGN, NULL, sizeof(true_val) }
 	};
 	char			*pin = NULL, prompt[1024];
 	int			rval = -1;
+
+	key_filter[0].pValue = &private_key_class;
+	key_filter[2].pValue = &true_val;
 
 	if ((k11 = RSA_get_app_data(rsa)) == NULL) {
 		error("RSA_get_app_data failed for rsa %p", rsa);
@@ -288,7 +292,7 @@ pkcs11_rsa_private_encrypt(int flen, const u_char *from, u_char *to, RSA *rsa,
 	} else {
 		/* XXX handle CKR_BUFFER_TOO_SMALL */
 		tlen = RSA_size(rsa);
-		rv = f->C_Sign(si->session, __UNCONST(from), flen, to, &tlen);
+		rv = f->C_Sign(si->session, (CK_BYTE *)from, flen, to, &tlen);
 		if (rv == CKR_OK) 
 			rval = tlen;
 		else 
@@ -398,13 +402,13 @@ static int
 pkcs11_fetch_keys(struct pkcs11_provider *p, CK_ULONG slotidx,
     struct sshkey ***keysp, int *nkeys)
 {
-	CK_OBJECT_CLASS		pubkey_class = CKO_PUBLIC_KEY;
-	CK_OBJECT_CLASS		cert_class = CKO_CERTIFICATE;
+	CK_OBJECT_CLASS	pubkey_class = CKO_PUBLIC_KEY;
+	CK_OBJECT_CLASS	cert_class = CKO_CERTIFICATE;
 	CK_ATTRIBUTE		pubkey_filter[] = {
-		{ CKA_CLASS, &pubkey_class, sizeof(pubkey_class) }
+		{ CKA_CLASS, NULL, sizeof(pubkey_class) }
 	};
 	CK_ATTRIBUTE		cert_filter[] = {
-		{ CKA_CLASS, &cert_class, sizeof(cert_class) }
+		{ CKA_CLASS, NULL, sizeof(cert_class) }
 	};
 	CK_ATTRIBUTE		pubkey_attribs[] = {
 		{ CKA_ID, NULL, 0 },
@@ -416,6 +420,8 @@ pkcs11_fetch_keys(struct pkcs11_provider *p, CK_ULONG slotidx,
 		{ CKA_SUBJECT, NULL, 0 },
 		{ CKA_VALUE, NULL, 0 }
 	};
+	pubkey_filter[0].pValue = &pubkey_class;
+	cert_filter[0].pValue = &cert_class;
 
 	if (pkcs11_fetch_keys_filter(p, slotidx, pubkey_filter, pubkey_attribs,
 	    keysp, nkeys) < 0 ||
@@ -669,11 +675,19 @@ fail:
 		dlclose(handle);
 	return (-1);
 }
+
 #else
+
 int
-pkcs11_add_provider(char *provider_id, char *pin, struct sshkey ***keyp)
+pkcs11_init(int interactive)
 {
-	error("dlopen() not supported");
-	return (-1);
+	return (0);
 }
-#endif
+
+void
+pkcs11_terminate(void)
+{
+	return;
+}
+
+#endif /* ENABLE_PKCS11 */

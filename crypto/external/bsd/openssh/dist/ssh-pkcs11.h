@@ -1,5 +1,4 @@
-/*	$NetBSD: ssh-pkcs11.h,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
-/* $OpenBSD: ssh-pkcs11.h,v 1.3 2014/04/29 18:01:49 markus Exp $ */
+/* $OpenBSD: ssh-pkcs11.h,v 1.4 2015/01/15 09:40:00 djm Exp $ */
 /*
  * Copyright (c) 2010 Markus Friedl.  All rights reserved.
  *

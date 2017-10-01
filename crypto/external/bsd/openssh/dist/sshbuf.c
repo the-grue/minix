@@ -14,8 +14,9 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
+#define SSHBUF_INTERNAL
 #include "includes.h"
-__RCSID("$NetBSD: sshbuf.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include <sys/param.h>	/* roundup */
 #include <sys/types.h>
@@ -25,7 +26,6 @@ __RCSID("$NetBSD: sshbuf.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 #include <string.h>
 
 #include "ssherr.h"
-#define SSHBUF_INTERNAL
 #include "sshbuf.h"
 
 static inline int

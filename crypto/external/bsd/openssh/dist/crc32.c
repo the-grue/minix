@@ -1,4 +1,3 @@
-/*	$NetBSD: crc32.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: crc32.c,v 1.11 2006/04/22 18:29:33 stevesk Exp $ */
 
 /*
@@ -24,10 +23,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #include "includes.h"
-__RCSID("$NetBSD: crc32.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
-#include <sys/types.h>
 #include "crc32.h"
 
 static const u_int32_t crc32tab[] = {

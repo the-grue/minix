@@ -1,4 +1,3 @@
-/*	$NetBSD: bufaux.c,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: bufaux.c,v 1.60 2014/04/30 05:29:56 djm Exp $ */
 /*
  * Copyright (c) 2012 Damien Miller <djm@mindrot.org>
@@ -16,9 +15,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "includes.h"
-__RCSID("$NetBSD: bufaux.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
 /* Emulation wrappers for legacy OpenSSH buffer API atop sshbuf */
+
+#include "includes.h"
 
 #include <sys/types.h>
 
@@ -41,7 +40,7 @@ buffer_get_short_ret(u_short *v, Buffer *buffer)
 u_short
 buffer_get_short(Buffer *buffer)
 {
-	u_short ret = 0;	/* XXX: GCC */
+	u_short ret;
 
 	if (buffer_get_short_ret(&ret, buffer) == -1)
 		fatal("%s: buffer error", __func__);
@@ -64,7 +63,7 @@ buffer_get_int_ret(u_int *v, Buffer *buffer)
 u_int
 buffer_get_int(Buffer *buffer)
 {
-	u_int ret = 0;		/* XXX: GCC */
+	u_int ret;
 
 	if (buffer_get_int_ret(&ret, buffer) == -1)
 		fatal("%s: buffer error", __func__);
@@ -87,7 +86,7 @@ buffer_get_int64_ret(u_int64_t *v, Buffer *buffer)
 u_int64_t
 buffer_get_int64(Buffer *buffer)
 {
-	u_int64_t ret = 0;	/* XXX: GCC */
+	u_int64_t ret;
 
 	if (buffer_get_int64_ret(&ret, buffer) == -1)
 		fatal("%s: buffer error", __func__);

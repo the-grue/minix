@@ -1,4 +1,3 @@
-/*	$NetBSD: serverloop.c,v 1.12 2015/04/13 18:00:47 christos Exp $	*/
 /* $OpenBSD: serverloop.c,v 1.178 2015/02/20 22:17:21 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -37,13 +36,14 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: serverloop.c,v 1.12 2015/04/13 18:00:47 christos Exp $");
+
 #include <sys/param.h>	/* MIN MAX */
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/queue.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 
 #include <netinet/in.h>
 
@@ -56,6 +56,7 @@ __RCSID("$NetBSD: serverloop.c,v 1.12 2015/04/13 18:00:47 christos Exp $");
 #include <unistd.h>
 #include <stdarg.h>
 
+#include "openbsd-compat/sys-queue.h"
 #include "xmalloc.h"
 #include "packet.h"
 #include "buffer.h"
@@ -93,10 +94,10 @@ static int fdin;		/* Descriptor for stdin (for writing) */
 static int fdout;		/* Descriptor for stdout (for reading);
 				   May be same number as fdin. */
 static int fderr;		/* Descriptor for stderr.  May be -1. */
-static u_long stdin_bytes = 0;	/* Number of bytes written to stdin. */
-static u_long stdout_bytes = 0;	/* Number of stdout bytes sent to client. */
-static u_long stderr_bytes = 0;	/* Number of stderr bytes sent to client. */
-static u_long fdout_bytes = 0;	/* Number of stdout bytes read from program. */
+static long stdin_bytes = 0;	/* Number of bytes written to stdin. */
+static long stdout_bytes = 0;	/* Number of stdout bytes sent to client. */
+static long stderr_bytes = 0;	/* Number of stderr bytes sent to client. */
+static long fdout_bytes = 0;	/* Number of stdout bytes read from program. */
 static int stdin_eof = 0;	/* EOF message received from client. */
 static int fdout_eof = 0;	/* EOF encountered reading from fdout. */
 static int fderr_eof = 0;	/* EOF encountered readung from fderr. */
@@ -119,19 +120,6 @@ static volatile sig_atomic_t received_sigterm = 0;
 
 /* prototypes */
 static void server_init_dispatch(void);
-
-/*
- * Returns current time in seconds from Jan 1, 1970 with the maximum
- * available resolution.
- */
-
-static double
-get_current_time(void)
-{
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	return (double) tv.tv_sec + (double) tv.tv_usec / 1000000.0;
-}
 
 /*
  * we write to this pipe if a SIGCHLD is caught in order to avoid
@@ -184,7 +172,9 @@ sigchld_handler(int sig)
 {
 	int save_errno = errno;
 	child_terminated = 1;
-	signal(SIGCHLD, sigchld_handler);
+#ifndef _UNICOS
+	mysignal(SIGCHLD, sigchld_handler);
+#endif
 	notify_parent();
 	errno = save_errno;
 }
@@ -293,6 +283,7 @@ wait_until_can_do_something(fd_set **readsetp, fd_set **writesetp, int *maxfdp,
 	int ret;
 	time_t minwait_secs = 0;
 	int client_alive_scheduled = 0;
+	int program_alive_scheduled = 0;
 
 	/* Allocate and update select() masks for channel descriptors. */
 	channel_prepare_select(readsetp, writesetp, maxfdp, nallocp,
@@ -336,6 +327,7 @@ wait_until_can_do_something(fd_set **readsetp, fd_set **writesetp, int *maxfdp,
 		 * the client, try to get some more data from the program.
 		 */
 		if (packet_not_very_much_data_to_write()) {
+			program_alive_scheduled = child_terminated;
 			if (!fdout_eof)
 				FD_SET(fdout, *readsetp);
 			if (!fderr_eof)
@@ -381,8 +373,16 @@ wait_until_can_do_something(fd_set **readsetp, fd_set **writesetp, int *maxfdp,
 		memset(*writesetp, 0, *nallocp);
 		if (errno != EINTR)
 			error("select: %.100s", strerror(errno));
-	} else if (ret == 0 && client_alive_scheduled)
-		client_alive_check();
+	} else {
+		if (ret == 0 && client_alive_scheduled)
+			client_alive_check();
+		if (!compat20 && program_alive_scheduled && fdin_is_tty) {
+			if (!fdout_eof)
+				FD_SET(fdout, *readsetp);
+			if (!fderr_eof)
+				FD_SET(fderr, *readsetp);
+		}
+	}
 
 	notify_done(*readsetp);
 }
@@ -411,7 +411,8 @@ process_input(fd_set *readset)
 				return;
 			cleanup_exit(255);
 		} else if (len < 0) {
-			if (errno != EINTR && errno != EAGAIN) {
+			if (errno != EINTR && errno != EAGAIN &&
+			    errno != EWOULDBLOCK) {
 				verbose("Read error from remote host "
 				    "%.100s: %.100s",
 				    get_remote_ipaddr(), strerror(errno));
@@ -420,7 +421,6 @@ process_input(fd_set *readset)
 		} else {
 			/* Buffer any received data. */
 			packet_process_incoming(buf, len);
-			fdout_bytes += len;
 		}
 	}
 	if (compat20)
@@ -428,23 +428,36 @@ process_input(fd_set *readset)
 
 	/* Read and buffer any available stdout data from the program. */
 	if (!fdout_eof && FD_ISSET(fdout, readset)) {
+		errno = 0;
 		len = read(fdout, buf, sizeof(buf));
-		if (len < 0 && (errno == EINTR || errno == EAGAIN)) {
+		if (len < 0 && (errno == EINTR || ((errno == EAGAIN ||
+		    errno == EWOULDBLOCK) && !child_terminated))) {
 			/* do nothing */
+#ifndef PTY_ZEROREAD
 		} else if (len <= 0) {
+#else
+		} else if ((!isatty(fdout) && len <= 0) ||
+		    (isatty(fdout) && (len < 0 || (len == 0 && errno != 0)))) {
+#endif
 			fdout_eof = 1;
 		} else {
 			buffer_append(&stdout_buffer, buf, len);
-			debug ("FD out now: %ld", fdout_bytes);
 			fdout_bytes += len;
 		}
 	}
 	/* Read and buffer any available stderr data from the program. */
 	if (!fderr_eof && FD_ISSET(fderr, readset)) {
+		errno = 0;
 		len = read(fderr, buf, sizeof(buf));
-		if (len < 0 && (errno == EINTR || errno == EAGAIN)) {
+		if (len < 0 && (errno == EINTR || ((errno == EAGAIN ||
+		    errno == EWOULDBLOCK) && !child_terminated))) {
 			/* do nothing */
+#ifndef PTY_ZEROREAD
 		} else if (len <= 0) {
+#else
+		} else if ((!isatty(fderr) && len <= 0) ||
+		    (isatty(fderr) && (len < 0 || (len == 0 && errno != 0)))) {
+#endif
 			fderr_eof = 1;
 		} else {
 			buffer_append(&stderr_buffer, buf, len);
@@ -468,7 +481,8 @@ process_output(fd_set *writeset)
 		data = buffer_ptr(&stdin_buffer);
 		dlen = buffer_len(&stdin_buffer);
 		len = write(fdin, data, dlen);
-		if (len < 0 && (errno == EINTR || errno == EAGAIN)) {
+		if (len < 0 &&
+		    (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
 			/* do nothing */
 		} else if (len <= 0) {
 			if (fdin != fdout)
@@ -496,7 +510,7 @@ process_output(fd_set *writeset)
 	}
 	/* Send any buffered packet data to the client. */
 	if (FD_ISSET(connection_out, writeset))
-		stdin_bytes += packet_write_poll();
+		packet_write_poll();
 }
 
 /*
@@ -559,7 +573,7 @@ server_loop(pid_t pid, int fdin_arg, int fdout_arg, int fderr_arg)
 
 	/* Initialize the SIGCHLD kludge. */
 	child_terminated = 0;
-	signal(SIGCHLD, sigchld_handler);
+	mysignal(SIGCHLD, sigchld_handler);
 
 	if (!use_privsep) {
 		signal(SIGTERM, sigterm_handler);
@@ -741,7 +755,7 @@ server_loop(pid_t pid, int fdin_arg, int fdout_arg, int fderr_arg)
 	channel_free_all();
 
 	/* We no longer want our SIGCHLD handler to be called. */
-	signal(SIGCHLD, SIG_DFL);
+	mysignal(SIGCHLD, SIG_DFL);
 
 	while ((wait_pid = waitpid(-1, &wait_status, 0)) < 0)
 		if (errno != EINTR)
@@ -813,12 +827,10 @@ server_loop2(Authctxt *authctxt)
 	int rekeying = 0, max_fd;
 	u_int nalloc = 0;
 	u_int64_t rekey_timeout_ms = 0;
-	double start_time, total_time;
 
 	debug("Entering interactive session for SSH2.");
-	start_time = get_current_time();
 
-	signal(SIGCHLD, sigchld_handler);
+	mysignal(SIGCHLD, sigchld_handler);
 	child_terminated = 0;
 	connection_in = packet_get_connection_in();
 	connection_out = packet_get_connection_out();
@@ -861,13 +873,9 @@ server_loop2(Authctxt *authctxt)
 		if (!rekeying) {
 			channel_after_select(readset, writeset);
 			if (packet_need_rekeying()) {
-				int r;
 				debug("need rekeying");
-				if (active_state->kex)
-					active_state->kex->done = 0;
-				if ((r = kex_send_kexinit(active_state)) != 0)
-					logit("%s: kex_send_kexinit: %s",
-					    __func__, ssh_err(r));
+				active_state->kex->done = 0;
+				kex_send_kexinit(active_state);
 			}
 		}
 		process_input(readset);
@@ -885,11 +893,6 @@ server_loop2(Authctxt *authctxt)
 
 	/* free remaining sessions, e.g. remove wtmp entries */
 	session_destroy_all(NULL);
-	total_time = get_current_time() - start_time;
-	logit("SSH: Server;LType: Throughput;Remote: %s-%d;IN: %lu;OUT: %lu;Duration: %.1f;tPut_in: %.1f;tPut_out: %.1f",
-	      get_remote_ipaddr(), get_remote_port(),
-	      stdin_bytes, fdout_bytes, total_time, stdin_bytes / total_time, 
-	      fdout_bytes / total_time);
 }
 
 static int
@@ -1048,13 +1051,14 @@ server_request_tun(void)
 	sock = tun_open(tun, mode);
 	if (sock < 0)
 		goto done;
-	if (options.hpn_disabled)
 	c = channel_new("tun", SSH_CHANNEL_OPEN, sock, sock, -1,
 	    CHAN_TCP_WINDOW_DEFAULT, CHAN_TCP_PACKET_DEFAULT, 0, "tun", 1);
-	else
-		c = channel_new("tun", SSH_CHANNEL_OPEN, sock, sock, -1,
-		    options.hpn_buffer_size, CHAN_TCP_PACKET_DEFAULT, 0, "tun", 1);
 	c->datagram = 1;
+#if defined(SSH_TUN_FILTER)
+	if (mode == SSH_TUNMODE_POINTOPOINT)
+		channel_register_filter(c->self, sys_tun_infilter,
+		    sys_tun_outfilter, NULL, NULL);
+#endif
 
  done:
 	if (c == NULL)
@@ -1084,8 +1088,6 @@ server_request_session(void)
 	c = channel_new("session", SSH_CHANNEL_LARVAL,
 	    -1, -1, -1, /*window size*/0, CHAN_SES_PACKET_DEFAULT,
 	    0, "server-session", 1);
-	if ((options.tcp_rcv_buf_poll > 0) && (!options.hpn_disabled))
-		c->dynamic_window = 1;
 	if (session_open(the_authctxt, c->self) != 1) {
 		debug("session open failed, free channel %d", c->self);
 		channel_free(c);
@@ -1247,9 +1249,12 @@ server_input_global_request(int type, u_int32_t seq, void *ctxt)
 		/* check permissions */
 		if ((options.allow_tcp_forwarding & FORWARD_REMOTE) == 0 ||
 		    no_port_forwarding_flag ||
-		    (!want_reply && fwd.listen_port == 0) ||
-		    (fwd.listen_port != 0 && fwd.listen_port < IPPORT_RESERVED &&
-		    pw->pw_uid != 0)) {
+		    (!want_reply && fwd.listen_port == 0)
+#ifndef NO_IPPORT_RESERVED_CONCEPT
+		    || (fwd.listen_port != 0 && fwd.listen_port < IPPORT_RESERVED &&
+		    pw->pw_uid != 0)
+#endif
+		    ) {
 			success = 0;
 			packet_send_debug("Server has disabled port forwarding.");
 		} else {

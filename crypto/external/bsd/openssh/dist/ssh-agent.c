@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-agent.c,v 1.16 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: ssh-agent.c,v 1.204 2015/07/08 20:24:02 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -36,31 +35,42 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-agent.c,v 1.16 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/param.h>	/* MIN MAX */
 #include <sys/types.h>
-#include <sys/time.h>
-#include <sys/queue.h>
+#include <sys/param.h>
 #include <sys/resource.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/un.h>
+#include <sys/socket.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
+#ifdef HAVE_SYS_UN_H
+# include <sys/un.h>
+#endif
+#include "openbsd-compat/sys-queue.h"
 
 #ifdef WITH_OPENSSL
 #include <openssl/evp.h>
+#include "openbsd-compat/openssl-compat.h"
 #endif
 
 #include <errno.h>
 #include <fcntl.h>
-#include <paths.h>
-#include <signal.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include <limits.h>
+#ifdef HAVE_PATHS_H
+# include <paths.h>
+#endif
+#include <signal.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
+#include <string.h>
 #include <unistd.h>
-#include <util.h>
+#ifdef HAVE_UTIL_H
+# include <util.h>
+#endif
 
 #include "xmalloc.h"
 #include "ssh.h"
@@ -71,12 +81,15 @@ __RCSID("$NetBSD: ssh-agent.c,v 1.16 2015/08/13 10:33:21 christos Exp $");
 #include "compat.h"
 #include "log.h"
 #include "misc.h"
-#include "getpeereid.h"
 #include "digest.h"
 #include "ssherr.h"
 
 #ifdef ENABLE_PKCS11
 #include "ssh-pkcs11.h"
+#endif
+
+#if defined(HAVE_SYS_PRCTL_H)
+#include <sys/prctl.h>	/* For prctl() and PR_SET_DUMPABLE */
 #endif
 
 typedef enum {
@@ -483,7 +496,8 @@ process_remove_all_identities(SocketEntry *e, int version)
 	Identity *id;
 
 	/* Loop over all identities and clear the keys. */
-	while ((id = TAILQ_FIRST(&tab->idlist)) != NULL) {
+	for (id = TAILQ_FIRST(&tab->idlist); id;
+	    id = TAILQ_FIRST(&tab->idlist)) {
 		TAILQ_REMOVE(&tab->idlist, id, next);
 		free_identity(id);
 	}
@@ -660,8 +674,8 @@ process_lock_agent(SocketEntry *e, int lock)
 	if (pwlen == 0) {
 		debug("empty password not supported");
 	} else if (locked && !lock) {
-		if (bcrypt_pbkdf(passwd, pwlen, (uint8_t *)lock_salt, sizeof(lock_salt),
-		    (uint8_t *)passwdhash, sizeof(passwdhash), LOCK_ROUNDS) < 0)
+		if (bcrypt_pbkdf(passwd, pwlen, lock_salt, sizeof(lock_salt),
+		    passwdhash, sizeof(passwdhash), LOCK_ROUNDS) < 0)
 			fatal("bcrypt_pbkdf");
 		if (timingsafe_bcmp(passwdhash, lock_passwd, LOCK_SIZE) == 0) {
 			debug("agent unlocked");
@@ -683,9 +697,8 @@ process_lock_agent(SocketEntry *e, int lock)
 		debug("agent locked");
 		locked = 1;
 		arc4random_buf(lock_salt, sizeof(lock_salt));
-		if (bcrypt_pbkdf(passwd, pwlen, (uint8_t *)lock_salt, sizeof(lock_salt),
-		    (uint8_t *)lock_passwd, sizeof(lock_passwd),
-		    LOCK_ROUNDS) < 0)
+		if (bcrypt_pbkdf(passwd, pwlen, lock_salt, sizeof(lock_salt),
+		    lock_passwd, sizeof(lock_passwd), LOCK_ROUNDS) < 0)
 			fatal("bcrypt_pbkdf");
 		success = 1;
 	}
@@ -1067,6 +1080,7 @@ after_select(fd_set *readset, fd_set *writeset)
 				    sshbuf_ptr(sockets[i].output),
 				    sshbuf_len(sockets[i].output));
 				if (len == -1 && (errno == EAGAIN ||
+				    errno == EWOULDBLOCK ||
 				    errno == EINTR))
 					continue;
 				if (len <= 0) {
@@ -1081,6 +1095,7 @@ after_select(fd_set *readset, fd_set *writeset)
 			if (FD_ISSET(sockets[i].fd, readset)) {
 				len = read(sockets[i].fd, buf, sizeof(buf));
 				if (len == -1 && (errno == EAGAIN ||
+				    errno == EWOULDBLOCK ||
 				    errno == EINTR))
 					continue;
 				if (len <= 0) {
@@ -1120,7 +1135,7 @@ cleanup_exit(int i)
 }
 
 /*ARGSUSED*/
-__dead static void
+static void
 cleanup_handler(int sig)
 {
 	cleanup_socket();
@@ -1144,7 +1159,7 @@ check_parent_exists(void)
 	}
 }
 
-__dead static void
+static void
 usage(void)
 {
 	fprintf(stderr,
@@ -1154,38 +1169,17 @@ usage(void)
 	exit(1);
 }
 
-static void
-csh_setenv(const char *name, const char *value)
-{
-	printf("setenv %s %s;\n", name, value);
-}
-
-static void
-csh_unsetenv(const char *name)
-{
-	printf("unsetenv %s;\n", name);
-}
-
-static void
-sh_setenv(const char *name, const char *value)
-{
-	printf("%s=%s; export %s;\n", name, value, name);
-}
-
-static void
-sh_unsetenv(const char *name)
-{
-	printf("unset %s;\n", name);
-}
 int
 main(int ac, char **av)
 {
 	int c_flag = 0, d_flag = 0, D_flag = 0, k_flag = 0, s_flag = 0;
 	int sock, fd, ch, result, saved_errno;
 	u_int nalloc;
-	char *shell, *pidstr, *agentsocket = NULL;
+	char *shell, *format, *pidstr, *agentsocket = NULL;
 	fd_set *readsetp = NULL, *writesetp = NULL;
+#ifdef HAVE_SETRLIMIT
 	struct rlimit rlim;
+#endif
 	extern int optind;
 	extern char *optarg;
 	pid_t pid;
@@ -1193,8 +1187,6 @@ main(int ac, char **av)
 	struct timeval *tvp = NULL;
 	size_t len;
 	mode_t prev_mask;
-	void (*f_setenv)(const char *, const char *);
-	void (*f_unsetenv)(const char *);
 
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
@@ -1203,9 +1195,17 @@ main(int ac, char **av)
 	setegid(getgid());
 	setgid(getgid());
 
+#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
+	/* Disable ptrace on Linux without sgid bit */
+	prctl(PR_SET_DUMPABLE, 0);
+#endif
+
 #ifdef WITH_OPENSSL
 	OpenSSL_add_all_algorithms();
 #endif
+
+	__progname = ssh_get_progname(av[0]);
+	seed_rng();
 
 	while ((ch = getopt(ac, av, "cDdksE:a:t:")) != -1) {
 		switch (ch) {
@@ -1262,13 +1262,6 @@ main(int ac, char **av)
 		    strncmp(shell + len - 3, "csh", 3) == 0)
 			c_flag = 1;
 	}
-	if (c_flag) {
-		f_setenv = csh_setenv;
-		f_unsetenv = csh_unsetenv;
-	} else {
-		f_setenv = sh_setenv;
-		f_unsetenv = sh_unsetenv;
-	}
 	if (k_flag) {
 		const char *errstr = NULL;
 
@@ -1289,8 +1282,9 @@ main(int ac, char **av)
 			perror("kill");
 			exit(1);
 		}
-		(*f_unsetenv)(SSH_AUTHSOCKET_ENV_NAME);
-		(*f_unsetenv)(SSH_AGENTPID_ENV_NAME);
+		format = c_flag ? "unsetenv %s;\n" : "unset %s;\n";
+		printf(format, SSH_AUTHSOCKET_ENV_NAME);
+		printf(format, SSH_AGENTPID_ENV_NAME);
 		printf("echo Agent pid %ld killed;\n", (long)pid);
 		exit(0);
 	}
@@ -1332,13 +1326,9 @@ main(int ac, char **av)
 		log_init(__progname,
 		    d_flag ? SYSLOG_LEVEL_DEBUG3 : SYSLOG_LEVEL_INFO,
 		    SYSLOG_FACILITY_AUTH, 1);
-		if (c_flag)
-			printf("setenv %s %s;\n",
-			    SSH_AUTHSOCKET_ENV_NAME, socket_name);
-		else
-			printf("%s=%s; export %s;\n",
-			    SSH_AUTHSOCKET_ENV_NAME, socket_name,
-			    SSH_AUTHSOCKET_ENV_NAME);
+		format = c_flag ? "setenv %s %s;\n" : "%s=%s; export %s;\n";
+		printf(format, SSH_AUTHSOCKET_ENV_NAME, socket_name,
+		    SSH_AUTHSOCKET_ENV_NAME);
 		printf("echo Agent pid %ld;\n", (long)parent_pid);
 		goto skip;
 	}
@@ -1351,8 +1341,11 @@ main(int ac, char **av)
 		close(sock);
 		snprintf(pidstrbuf, sizeof pidstrbuf, "%ld", (long)pid);
 		if (ac == 0) {
-			(*f_setenv)(SSH_AUTHSOCKET_ENV_NAME, socket_name);
-			(*f_setenv)(SSH_AGENTPID_ENV_NAME, pidstrbuf);
+			format = c_flag ? "setenv %s %s;\n" : "%s=%s; export %s;\n";
+			printf(format, SSH_AUTHSOCKET_ENV_NAME, socket_name,
+			    SSH_AUTHSOCKET_ENV_NAME);
+			printf(format, SSH_AGENTPID_ENV_NAME, pidstrbuf,
+			    SSH_AGENTPID_ENV_NAME);
 			printf("echo Agent pid %ld;\n", (long)pid);
 			exit(0);
 		}
@@ -1374,59 +1367,23 @@ main(int ac, char **av)
 	}
 
 	(void)chdir("/");
-
-	if (sock != STDERR_FILENO + 1) {
-		if (dup2(sock, STDERR_FILENO + 1) == -1) {
-			error("dup2: %s", strerror(errno));
-			cleanup_exit(1);
-		}
-		close(sock);
-		sock = STDERR_FILENO + 1;
-	}
-#if defined(F_CLOSEM)
-	if (fcntl(sock + 1, F_CLOSEM, 0) == -1) {
-		error("fcntl F_CLOSEM: %s", strerror(errno));
-		cleanup_exit(1);
-	}
-#else
-	{
-		int nfiles;
-#if defined(_SC_OPEN_MAX)
-		nfiles = sysconf(_SC_OPEN_MAX);
-#elif defined(RLIMIT_NOFILE)
-		if (getrlimit(RLIMIT_CORE, &rlim) < 0) {
-			error("getrlimit RLIMIT_NOFILE: %s", strerror(errno));
-			cleanup_exit(1);
-		}
-		nfiles = rlim.rlim_cur;
-#elif defined(OPEN_MAX)
-		nfiles = OPEN_MAX;
-#elif defined(NOFILE)
-		nfiles = NOFILE;
-#else
-		nfiles = 1024;
-#endif
-		for (fd = sock + 1; fd < nfiles; fd++)
-			close(fd);
-	}
-#endif
 	if ((fd = open(_PATH_DEVNULL, O_RDWR, 0)) != -1) {
-		if (dup2(fd, STDIN_FILENO) == -1 ||
-		    dup2(fd, STDOUT_FILENO) == -1 ||
-		    dup2(fd, STDERR_FILENO) == -1) {
-			error("dup2: %s", strerror(errno));
-			cleanup_exit(1);
-		}
-		if (fd > STDERR_FILENO)
+		/* XXX might close listen socket */
+		(void)dup2(fd, STDIN_FILENO);
+		(void)dup2(fd, STDOUT_FILENO);
+		(void)dup2(fd, STDERR_FILENO);
+		if (fd > 2)
 			close(fd);
 	}
 
+#ifdef HAVE_SETRLIMIT
 	/* deny core dumps, since memory contains unencrypted private keys */
 	rlim.rlim_cur = rlim.rlim_max = 0;
 	if (setrlimit(RLIMIT_CORE, &rlim) < 0) {
 		error("setrlimit RLIMIT_CORE: %s", strerror(errno));
 		cleanup_exit(1);
 	}
+#endif
 
 skip:
 

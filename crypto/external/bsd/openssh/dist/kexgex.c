@@ -1,4 +1,3 @@
-/*	$NetBSD: kexgex.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: kexgex.c,v 1.29 2015/01/19 20:16:15 markus Exp $ */
 /*
  * Copyright (c) 2000 Niels Provos.  All rights reserved.
@@ -26,7 +25,9 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: kexgex.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_OPENSSL
+
 #include <sys/types.h>
 
 #include <openssl/evp.h>
@@ -98,3 +99,4 @@ kexgex_hash(
 #endif
 	return 0;
 }
+#endif /* WITH_OPENSSL */

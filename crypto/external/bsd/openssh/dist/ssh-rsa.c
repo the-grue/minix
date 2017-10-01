@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-rsa.c,v 1.8 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: ssh-rsa.c,v 1.53 2015/06/15 01:32:50 djm Exp $ */
 /*
  * Copyright (c) 2000, 2003 Markus Friedl <markus@openbsd.org>
@@ -17,12 +16,15 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-rsa.c,v 1.8 2015/07/03 01:00:00 christos Exp $");
+
+#ifdef WITH_OPENSSL
+
 #include <sys/types.h>
 
 #include <openssl/evp.h>
 #include <openssl/err.h>
 
+#include <stdarg.h>
 #include <string.h>
 
 #include "sshbuf.h"
@@ -263,3 +265,4 @@ done:
 	}
 	return ret;
 }
+#endif /* WITH_OPENSSL */

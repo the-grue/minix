@@ -1,4 +1,3 @@
-/*	$NetBSD: umac.c,v 1.9 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: umac.c,v 1.11 2014/07/22 07:13:42 guenther Exp $ */
 /* -----------------------------------------------------------------------
  * 
@@ -56,6 +55,12 @@
 #ifndef UMAC_OUTPUT_LEN
 #define UMAC_OUTPUT_LEN     8  /* Alowable: 4, 8, 12, 16                  */
 #endif
+
+#if UMAC_OUTPUT_LEN != 4 && UMAC_OUTPUT_LEN != 8 && \
+    UMAC_OUTPUT_LEN != 12 && UMAC_OUTPUT_LEN != 16
+# error UMAC_OUTPUT_LEN must be defined to 4, 8, 12 or 16
+#endif
+
 /* #define FORCE_C_ONLY        1  ANSI C and 64-bit integers req'd        */
 /* #define AES_IMPLEMENTAION   1  1 = OpenSSL, 2 = Barreto, 3 = Gladman   */
 /* #define SSE2                0  Is SSE2 is available?                   */
@@ -67,14 +72,11 @@
 /* ---------------------------------------------------------------------- */
 
 #include "includes.h"
-__RCSID("$NetBSD: umac.c,v 1.9 2015/04/03 23:58:19 christos Exp $");
 #include <sys/types.h>
-#include <sys/endian.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
-#include <time.h>
 
 #include "xmalloc.h"
 #include "umac.h"
@@ -131,22 +133,16 @@ typedef unsigned int	UWORD;  /* Register */
 /* --- Endian Conversion --- Forcing assembly on some platforms           */
 /* ---------------------------------------------------------------------- */
 
-/* The following definitions use the above reversal-primitives to do the right
- * thing on endian specific load and stores.
- */
-
-#if BYTE_ORDER == LITTLE_ENDIAN
+#if (__LITTLE_ENDIAN__)
 #define LOAD_UINT32_REVERSED(p)		get_u32(p)
-#define STORE_UINT32_REVERSED(p,v) 	put_u32(p,v)
+#define STORE_UINT32_REVERSED(p,v)	put_u32(p,v)
 #else
 #define LOAD_UINT32_REVERSED(p)		get_u32_le(p)
-#define STORE_UINT32_REVERSED(p,v) 	put_u32_le(p,v)
+#define STORE_UINT32_REVERSED(p,v)	put_u32_le(p,v)
 #endif
 
-#define LOAD_UINT32_LITTLE(p)           (get_u32_le(p))
-#define STORE_UINT32_BIG(p,v)           put_u32(p, v)
-
-
+#define LOAD_UINT32_LITTLE(p)		(get_u32_le(p))
+#define STORE_UINT32_BIG(p,v)		put_u32(p, v)
 
 /* ---------------------------------------------------------------------- */
 /* ---------------------------------------------------------------------- */
@@ -157,8 +153,12 @@ typedef unsigned int	UWORD;  /* Register */
 /* UMAC uses AES with 16 byte block and key lengths */
 #define AES_BLOCK_LEN  16
 
+/* OpenSSL's AES */
 #ifdef WITH_OPENSSL
-#include <openssl/aes.h>
+#include "openbsd-compat/openssl-compat.h"
+#ifndef USE_BUILTIN_RIJNDAEL
+# include <openssl/aes.h>
+#endif
 typedef AES_KEY aes_int_key[1];
 #define aes_encryption(in,out,int_key)                  \
   AES_encrypt((u_char *)(in),(u_char *)(out),(AES_KEY *)int_key)
@@ -178,14 +178,14 @@ typedef UINT8 aes_int_key[AES_ROUNDS+1][4][4];	/* AES internal */
 /* The user-supplied UMAC key is stretched using AES in a counter
  * mode to supply all random bits needed by UMAC. The kdf function takes
  * an AES internal key representation 'key' and writes a stream of
- * 'nbytes' bytes to the memory pointed at by 'buffer_ptr'. Each distinct
+ * 'nbytes' bytes to the memory pointed at by 'bufp'. Each distinct
  * 'ndx' causes a distinct byte stream.
  */
-static void kdf(void *buffer_ptr, aes_int_key key, UINT8 ndx, int nbytes)
+static void kdf(void *bufp, aes_int_key key, UINT8 ndx, int nbytes)
 {
     UINT8 in_buf[AES_BLOCK_LEN] = {0};
     UINT8 out_buf[AES_BLOCK_LEN];
-    UINT8 *dst_buf = (UINT8 *)buffer_ptr;
+    UINT8 *dst_buf = (UINT8 *)bufp;
     int i;
     
     /* Setup the initial value */
@@ -229,26 +229,6 @@ static void pdf_init(pdf_ctx *pc, aes_int_key prf_key)
     aes_encryption(pc->nonce, pc->cache, pc->prf_key);
 }
 
-static inline void
-xor64(uint8_t *dp, int di, uint8_t *sp, int si)
-{
-    uint64_t dst, src;
-    memcpy(&dst, dp + sizeof(dst) * di, sizeof(dst));
-    memcpy(&src, sp + sizeof(src) * si, sizeof(src));
-    dst ^= src;
-    memcpy(dp + sizeof(dst) * di, &dst, sizeof(dst));
-}
-
-__unused static inline void
-xor32(uint8_t *dp, int di, uint8_t *sp, int si)
-{
-    uint32_t dst, src;
-    memcpy(&dst, dp + sizeof(dst) * di, sizeof(dst));
-    memcpy(&src, sp + sizeof(src) * si, sizeof(src));
-    dst ^= src;
-    memcpy(dp + sizeof(dst) * di, &dst, sizeof(dst));
-}
-
 static void pdf_gen_xor(pdf_ctx *pc, const UINT8 nonce[8], UINT8 buf[8])
 {
     /* 'ndx' indicates that we'll be using the 0th or 1st eight bytes
@@ -270,27 +250,27 @@ static void pdf_gen_xor(pdf_ctx *pc, const UINT8 nonce[8], UINT8 buf[8])
 #if LOW_BIT_MASK != 0
     int ndx = nonce[7] & LOW_BIT_MASK;
 #endif
-    memcpy(t.tmp_nonce_lo, nonce + 4, sizeof(t.tmp_nonce_lo));
+    *(UINT32 *)t.tmp_nonce_lo = ((const UINT32 *)nonce)[1];
     t.tmp_nonce_lo[3] &= ~LOW_BIT_MASK; /* zero last bit */
     
-    if (memcmp(t.tmp_nonce_lo, pc->nonce + 1, sizeof(t.tmp_nonce_lo)) != 0 ||
-         memcmp(nonce, pc->nonce, sizeof(t.tmp_nonce_lo)) != 0)
+    if ( (((UINT32 *)t.tmp_nonce_lo)[0] != ((UINT32 *)pc->nonce)[1]) ||
+         (((const UINT32 *)nonce)[0] != ((UINT32 *)pc->nonce)[0]) )
     {
-	memcpy(pc->nonce, nonce, sizeof(t.tmp_nonce_lo));
-	memcpy(pc->nonce + 4, t.tmp_nonce_lo, sizeof(t.tmp_nonce_lo));
+        ((UINT32 *)pc->nonce)[0] = ((const UINT32 *)nonce)[0];
+        ((UINT32 *)pc->nonce)[1] = ((UINT32 *)t.tmp_nonce_lo)[0];
         aes_encryption(pc->nonce, pc->cache, pc->prf_key);
     }
     
 #if (UMAC_OUTPUT_LEN == 4)
-    xor32(buf, 0, pc->cache, ndx);
+    *((UINT32 *)buf) ^= ((UINT32 *)pc->cache)[ndx];
 #elif (UMAC_OUTPUT_LEN == 8)
-    xor64(buf, 0, pc->cache, ndx);
+    *((UINT64 *)buf) ^= ((UINT64 *)pc->cache)[ndx];
 #elif (UMAC_OUTPUT_LEN == 12)
-    xor64(buf, 0, pc->cache, 0);
-    xor32(buf, 2, pc->cache, 2);
+    ((UINT64 *)buf)[0] ^= ((UINT64 *)pc->cache)[0];
+    ((UINT32 *)buf)[2] ^= ((UINT32 *)pc->cache)[2];
 #elif (UMAC_OUTPUT_LEN == 16)
-    xor64(buf, 0, pc->cache, 0);
-    xor64(buf, 1, pc->cache, 1);
+    ((UINT64 *)buf)[0] ^= ((UINT64 *)pc->cache)[0];
+    ((UINT64 *)buf)[1] ^= ((UINT64 *)pc->cache)[1];
 #endif
 }
 

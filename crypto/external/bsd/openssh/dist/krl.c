@@ -1,4 +1,3 @@
-/*	$NetBSD: krl.c,v 1.7 2015/08/13 10:33:21 christos Exp $	*/
 /*
  * Copyright (c) 2012 Damien Miller <djm@mindrot.org>
  *
@@ -15,16 +14,14 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/cdefs.h>
-__RCSID("$NetBSD: krl.c,v 1.7 2015/08/13 10:33:21 christos Exp $");
-
 /* $OpenBSD: krl.c,v 1.33 2015/07/03 03:43:18 djm Exp $ */
 
 #include "includes.h"
+
 #include <sys/param.h>	/* MIN */
 #include <sys/types.h>
-#include <sys/tree.h>
-#include <sys/queue.h>
+#include <openbsd-compat/sys-tree.h>
+#include <openbsd-compat/sys-queue.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -247,7 +244,7 @@ insert_serial_range(struct revoked_serial_tree *rt, u_int64_t lo, u_int64_t hi)
 {
 	struct revoked_serial rs, *ers, *crs, *irs;
 
-	KRL_DBG(("%s: insert %"PRIu64":%"PRIu64, __func__, lo, hi));
+	KRL_DBG(("%s: insert %llu:%llu", __func__, lo, hi));
 	memset(&rs, 0, sizeof(rs));
 	rs.lo = lo;
 	rs.hi = hi;
@@ -266,7 +263,7 @@ insert_serial_range(struct revoked_serial_tree *rt, u_int64_t lo, u_int64_t hi)
 		}
 		ers = irs;
 	} else {
-		KRL_DBG(("%s: overlap found %"PRIu64":%"PRIu64, __func__,
+		KRL_DBG(("%s: overlap found %llu:%llu", __func__,
 		    ers->lo, ers->hi));
 		/*
 		 * The inserted entry overlaps an existing one. Grow the
@@ -285,14 +282,13 @@ insert_serial_range(struct revoked_serial_tree *rt, u_int64_t lo, u_int64_t hi)
 
 	/* Check predecessors */
 	while ((crs = RB_PREV(revoked_serial_tree, rt, ers)) != NULL) {
-		KRL_DBG(("%s: pred %"PRIu64":%"PRIu64, __func__,
-		    crs->lo, crs->hi));
+		KRL_DBG(("%s: pred %llu:%llu", __func__, crs->lo, crs->hi));
 		if (ers->lo != 0 && crs->hi < ers->lo - 1)
 			break;
 		/* This entry overlaps. */
 		if (crs->lo < ers->lo) {
 			ers->lo = crs->lo;
-			KRL_DBG(("%s: pred extend %"PRIu64":%"PRIu64, __func__,
+			KRL_DBG(("%s: pred extend %llu:%llu", __func__,
 			    ers->lo, ers->hi));
 		}
 		RB_REMOVE(revoked_serial_tree, rt, crs);
@@ -300,21 +296,19 @@ insert_serial_range(struct revoked_serial_tree *rt, u_int64_t lo, u_int64_t hi)
 	}
 	/* Check successors */
 	while ((crs = RB_NEXT(revoked_serial_tree, rt, ers)) != NULL) {
-		KRL_DBG(("%s: succ %"PRIu64":%"PRIu64, __func__, crs->lo,
-		    crs->hi));
+		KRL_DBG(("%s: succ %llu:%llu", __func__, crs->lo, crs->hi));
 		if (ers->hi != (u_int64_t)-1 && crs->lo > ers->hi + 1)
 			break;
 		/* This entry overlaps. */
 		if (crs->hi > ers->hi) {
 			ers->hi = crs->hi;
-			KRL_DBG(("%s: succ extend %"PRIu64":%"PRIu64, __func__,
+			KRL_DBG(("%s: succ extend %llu:%llu", __func__,
 			    ers->lo, ers->hi));
 		}
 		RB_REMOVE(revoked_serial_tree, rt, crs);
 		free(crs);
 	}
-	KRL_DBG(("%s: done, final %"PRIu64":%"PRIu64, __func__, ers->lo,
-	    ers->hi));
+	KRL_DBG(("%s: done, final %llu:%llu", __func__, ers->lo, ers->hi));
 	return 0;
 }
 

@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-keyscan.c,v 1.14 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: ssh-keyscan.c,v 1.101 2015/04/10 00:08:55 djm Exp $ */
 /*
  * Copyright 1995, 1996 by David Mazieres <dm@lcs.mit.edu>.
@@ -9,19 +8,21 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-keyscan.c,v 1.14 2015/07/03 01:00:00 christos Exp $");
-
-#include <sys/param.h>
+ 
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/queue.h>
-#include <sys/time.h>
+#include "openbsd-compat/sys-queue.h"
 #include <sys/resource.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
+
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <openssl/bn.h>
 
-#include <errno.h>
 #include <netdb.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,6 +77,8 @@ fd_set *read_wait;
 size_t read_wait_nfdset;
 int ncon;
 
+struct ssh *active_state = NULL; /* XXX needed for linking */
+
 /*
  * Keep a connection structure for each file descriptor.  The state
  * associated with file descriptor n is held in fdcon[n].
@@ -110,28 +113,38 @@ static void keyprint(con *c, struct sshkey *key);
 static int
 fdlim_get(int hard)
 {
+#if defined(HAVE_GETRLIMIT) && defined(RLIMIT_NOFILE)
 	struct rlimit rlfd;
 
 	if (getrlimit(RLIMIT_NOFILE, &rlfd) < 0)
 		return (-1);
 	if ((hard ? rlfd.rlim_max : rlfd.rlim_cur) == RLIM_INFINITY)
-		return sysconf(_SC_OPEN_MAX);
+		return SSH_SYSFDMAX;
 	else
 		return hard ? rlfd.rlim_max : rlfd.rlim_cur;
+#else
+	return SSH_SYSFDMAX;
+#endif
 }
 
 static int
 fdlim_set(int lim)
 {
+#if defined(HAVE_SETRLIMIT) && defined(RLIMIT_NOFILE)
 	struct rlimit rlfd;
+#endif
 
 	if (lim <= 0)
 		return (-1);
+#if defined(HAVE_SETRLIMIT) && defined(RLIMIT_NOFILE)
 	if (getrlimit(RLIMIT_NOFILE, &rlfd) < 0)
 		return (-1);
 	rlfd.rlim_cur = lim;
 	if (setrlimit(RLIMIT_NOFILE, &rlfd) < 0)
 		return (-1);
+#elif defined (HAVE_SETDTABLESIZE)
+	setdtablesize(lim);
+#endif
 	return (0);
 }
 
@@ -163,7 +176,7 @@ xstrsep(char **str, const char *delim)
  * null token for two adjacent separators, so we may have to loop.
  */
 static char *
-strnnsep(char **stringp, const char *delim)
+strnnsep(char **stringp, char *delim)
 {
 	char *tok;
 
@@ -250,7 +263,7 @@ ssh2_capable(int remote_major, int remote_minor)
 static void
 keygrab_ssh2(con *c)
 {
-	const char *myproposal[PROPOSAL_MAX] = { KEX_CLIENT };
+	char *myproposal[PROPOSAL_MAX] = { KEX_CLIENT };
 	int r;
 
 	enable_compat20();
@@ -269,7 +282,9 @@ keygrab_ssh2(con *c)
 	c->c_ssh->kex->kex[KEX_DH_GRP14_SHA1] = kexdh_client;
 	c->c_ssh->kex->kex[KEX_DH_GEX_SHA1] = kexgex_client;
 	c->c_ssh->kex->kex[KEX_DH_GEX_SHA256] = kexgex_client;
+# ifdef OPENSSL_HAS_ECC
 	c->c_ssh->kex->kex[KEX_ECDH_SHA2] = kexecdh_client;
+# endif
 #endif
 	c->c_ssh->kex->kex[KEX_C25519_SHA256] = kexc25519_client;
 	ssh_set_verify_host_key_callback(c->c_ssh, key_print_wrapper);
@@ -284,7 +299,6 @@ static void
 keyprint(con *c, struct sshkey *key)
 {
 	char *host = c->c_output_name ? c->c_output_name : c->c_name;
-	int r;
 	char *hostport = NULL;
 
 	if (!key)
@@ -294,10 +308,7 @@ keyprint(con *c, struct sshkey *key)
 
 	hostport = put_host_port(host, ssh_port);
 	fprintf(stdout, "%s ", hostport);
-
-	if ((r = sshkey_write(key, stdout)) != 0)
-		fprintf(stderr, "key_write failed: %s", ssh_err(r));
-
+	sshkey_write(key, stdout);
 	fputs("\n", stdout);
 	free(hostport);
 }
@@ -573,7 +584,7 @@ conloop(void)
 	memcpy(e, read_wait, read_wait_nfdset * sizeof(fd_mask));
 
 	while (select(maxfd, r, NULL, e, &seltime) == -1 &&
-	    (errno == EAGAIN || errno == EINTR))
+	    (errno == EAGAIN || errno == EINTR || errno == EWOULDBLOCK))
 		;
 
 	for (i = 0; i < maxfd; i++) {
@@ -613,7 +624,7 @@ do_host(char *host)
 	}
 }
 
-__dead void
+void
 fatal(const char *fmt,...)
 {
 	va_list args;
@@ -624,7 +635,7 @@ fatal(const char *fmt,...)
 	exit(255);
 }
 
-__dead static void
+static void
 usage(void)
 {
 	fprintf(stderr,
@@ -646,6 +657,8 @@ main(int argc, char **argv)
 	extern int optind;
 	extern char *optarg;
 
+	__progname = ssh_get_progname(argv[0]);
+	seed_rng();
 	TAILQ_INIT(&tq);
 
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */

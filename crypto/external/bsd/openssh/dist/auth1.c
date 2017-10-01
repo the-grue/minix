@@ -1,4 +1,3 @@
-/*	$NetBSD: auth1.c,v 1.12 2015/07/03 00:59:59 christos Exp $	*/
 /* $OpenBSD: auth1.c,v 1.82 2014/07/15 15:54:14 millert Exp $ */
 /*
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -12,15 +11,18 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth1.c,v 1.12 2015/07/03 00:59:59 christos Exp $");
-#include <sys/types.h>
-#include <sys/queue.h>
 
+#ifdef WITH_SSH1
+
+#include <sys/types.h>
+
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <pwd.h>
 
+#include "openbsd-compat/sys-queue.h"
 #include "xmalloc.h"
 #include "rsa.h"
 #include "ssh1.h"
@@ -41,7 +43,6 @@ __RCSID("$NetBSD: auth1.c,v 1.12 2015/07/03 00:59:59 christos Exp $");
 #endif
 #include "monitor_wrap.h"
 #include "buffer.h"
-#include "pfilter.h"
 
 /* import */
 extern ServerOptions options;
@@ -52,13 +53,12 @@ static int auth1_process_rsa(Authctxt *);
 static int auth1_process_rhosts_rsa(Authctxt *);
 static int auth1_process_tis_challenge(Authctxt *);
 static int auth1_process_tis_response(Authctxt *);
-#if defined(KRB4) || defined(KRB5)
-static int auth1_process_kerberos(Authctxt *);
-#endif
+
+static char *client_user = NULL;    /* Used to fill in remote user for PAM */
 
 struct AuthMethod1 {
 	int type;
-	const char *name;
+	char *name;
 	int *enabled;
 	int (*method)(Authctxt *);
 };
@@ -86,13 +86,6 @@ const struct AuthMethod1 auth1_methods[] = {
 		&options.challenge_response_authentication,
 		auth1_process_tis_response
 	},
-#if defined(KRB4) || defined(KRB5)
-	{
-		SSH_CMSG_AUTH_KERBEROS, "kerberos",
-		&options.kerberos_authentication,
-		auth1_process_kerberos
-	},
-#endif /* KRB4 || KRB5 */
 	{ -1, NULL, NULL, NULL}
 };
 
@@ -108,7 +101,7 @@ static const struct AuthMethod1
 	return (NULL);
 }
 
-static const char *
+static char *
 get_authname(int type)
 {
 	const struct AuthMethod1 *a;
@@ -145,60 +138,23 @@ auth1_process_password(Authctxt *authctxt)
 	return (authenticated);
 }
 
-#if defined(KRB4) || defined(KRB5)
+/*ARGSUSED*/
 static int
-auth1_process_kerberos(Authctxt *authctxt)
+auth1_process_rsa(Authctxt *authctxt)
 {
 	int authenticated = 0;
-	u_int dlen;
-	char *client_user;
-	char *kdata = packet_get_string(&dlen);
+	BIGNUM *n;
+
+	/* RSA authentication requested. */
+	if ((n = BN_new()) == NULL)
+		fatal("do_authloop: BN_new failed");
+	packet_get_bignum(n);
 	packet_check_eom();
+	authenticated = auth_rsa(authctxt, n);
+	BN_clear_free(n);
 
-	if (kdata[0] == 4) { /* KRB_PROT_VERSION */
-#ifdef KRB4
-		KTEXT_ST tkt, reply;
-		tkt.length = dlen;
-		if (tkt.length < MAX_KTXT_LEN)
-			memcpy(tkt.dat, kdata, tkt.length);
-
-		if (PRIVSEP(auth_krb4(authctxt, &tkt, &client_user, &reply))) {
-			authenticated = 1;
-
-			packet_start(SSH_SMSG_AUTH_KERBEROS_RESPONSE);
-			packet_put_string((char *)
-			    reply.dat, reply.length);
-			packet_send();
-			packet_write_wait();
-
-			free(client_user);
-		}
-#endif /* KRB4 */
-	} else {
-#ifdef KRB5
-		krb5_data tkt, reply;
-		tkt.length = dlen;
-		tkt.data = kdata;
-
-		if (PRIVSEP(auth_krb5(authctxt, &tkt, &client_user, &reply))) {
-			authenticated = 1;
-
-			/* Send response to client */
-			packet_start(SSH_SMSG_AUTH_KERBEROS_RESPONSE);
-			packet_put_string((char *)reply.data, reply.length);
-			packet_send();
-			packet_write_wait();
-
-			if (reply.length)
-				free(reply.data);
-			free(client_user);
-		}
-#endif /* KRB5 */
-	}
-	free(kdata);
-	return authenticated;
+	return (authenticated);
 }
-#endif /* KRB4 || KRB5 */
 
 /*ARGSUSED*/
 static int
@@ -206,7 +162,6 @@ auth1_process_rhosts_rsa(Authctxt *authctxt)
 {
 	int keybits, authenticated = 0;
 	u_int bits;
-	char *client_user;
 	Key *client_host_key;
 	u_int ulen;
 
@@ -236,25 +191,6 @@ auth1_process_rhosts_rsa(Authctxt *authctxt)
 	key_free(client_host_key);
 
 	auth_info(authctxt, "ruser %.100s", client_user);
-	free(client_user);
-
-	return (authenticated);
-}
-
-/*ARGSUSED*/
-static int
-auth1_process_rsa(Authctxt *authctxt)
-{
-	int authenticated = 0;
-	BIGNUM *n;
-
-	/* RSA authentication requested. */
-	if ((n = BN_new()) == NULL)
-		fatal("do_authloop: BN_new failed");
-	packet_get_bignum(n);
-	packet_check_eom();
-	authenticated = auth_rsa(authctxt, n);
-	BN_clear_free(n);
 
 	return (authenticated);
 }
@@ -303,7 +239,7 @@ static void
 do_authloop(Authctxt *authctxt)
 {
 	int authenticated = 0;
-	int type = 0;
+	int prev = 0, type = 0;
 	const struct AuthMethod1 *meth;
 
 	debug("Attempting authentication for %s%.100s.",
@@ -311,19 +247,18 @@ do_authloop(Authctxt *authctxt)
 
 	/* If the user has no password, accept authentication immediately. */
 	if (options.permit_empty_passwd && options.password_authentication &&
-#if defined(KRB4) || defined(KRB5)
+#ifdef KRB5
 	    (!options.kerberos_authentication || options.kerberos_or_local_passwd) &&
 #endif
-	    PRIVSEP(auth_password(authctxt, __UNCONST("")))) {
+	    PRIVSEP(auth_password(authctxt, ""))) {
 #ifdef USE_PAM
- 		if (options.use_pam && PRIVSEP(do_pam_account()))
+		if (options.use_pam && (PRIVSEP(do_pam_account())))
 #endif
 		{
 			auth_log(authctxt, 1, 0, "without authentication",
 			    NULL);
 			return;
 		}
-		return;
 	}
 
 	/* Indicate that authentication is needed. */
@@ -337,7 +272,20 @@ do_authloop(Authctxt *authctxt)
 
 
 		/* Get a packet from the client. */
+		prev = type;
 		type = packet_read();
+
+		/*
+		 * If we started challenge-response authentication but the
+		 * next packet is not a response to our challenge, release
+		 * the resources allocated by get_challenge() (which would
+		 * normally have been released by verify_response() had we
+		 * received such a response)
+		 */
+		if (prev == SSH_CMSG_AUTH_TIS &&
+		    type != SSH_CMSG_AUTH_TIS_RESPONSE)
+			abandon_challenge_response(authctxt);
+
 		if (authctxt->failures >= options.max_authtries)
 			goto skip;
 		if ((meth = lookup_authmethod1(type)) == NULL) {
@@ -365,10 +313,23 @@ do_authloop(Authctxt *authctxt)
 			fatal("INTERNAL ERROR: authenticated invalid user %s",
 			    authctxt->user);
 
+#ifdef _UNICOS
+		if (authenticated && cray_access_denied(authctxt->user)) {
+			authenticated = 0;
+			fatal("Access denied for user %s.",authctxt->user);
+		}
+#endif /* _UNICOS */
+
+#ifndef HAVE_CYGWIN
 		/* Special handling for root */
 		if (authenticated && authctxt->pw->pw_uid == 0 &&
-		    !auth_root_allowed(meth->name))
-			authenticated = 0;
+		    !auth_root_allowed(meth->name)) {
+ 			authenticated = 0;
+# ifdef SSH_AUDIT_EVENTS
+			PRIVSEP(audit_event(SSH_LOGIN_ROOT_DENIED));
+# endif
+		}
+#endif
 
 #ifdef USE_PAM
 		if (options.use_pam && authenticated &&
@@ -380,13 +341,13 @@ do_authloop(Authctxt *authctxt)
 			    "configuration", authctxt->user);
 			len = buffer_len(&loginmsg);
 			buffer_append(&loginmsg, "\0", 1);
-			msg = (char *)buffer_ptr(&loginmsg);
+			msg = buffer_ptr(&loginmsg);
 			/* strip trailing newlines */
 			if (len > 0)
 				while (len > 0 && msg[--len] == '\n')
 					msg[len] = '\0';
 			else
-				msg = __UNCONST("Access denied.");
+				msg = "Access denied.";
 			packet_disconnect("%s", msg);
 		}
 #endif
@@ -395,11 +356,18 @@ do_authloop(Authctxt *authctxt)
 		/* Log before sending the reply */
 		auth_log(authctxt, authenticated, 0, get_authname(type), NULL);
 
+		free(client_user);
+		client_user = NULL;
+
 		if (authenticated)
 			return;
 
-		if (++authctxt->failures >= options.max_authtries)
+		if (++authctxt->failures >= options.max_authtries) {
+#ifdef SSH_AUDIT_EVENTS
+			PRIVSEP(audit_event(SSH_LOGIN_EXCEED_MAXTRIES));
+#endif
 			auth_maxtries_exceeded(authctxt);
+		}
 
 		packet_start(SSH_SMSG_FAILURE);
 		packet_send();
@@ -436,7 +404,6 @@ do_authentication(Authctxt *authctxt)
 	else {
 		debug("do_authentication: invalid user %s", user);
 		authctxt->pw = fakepw();
-		pfilter_notify(1);
 	}
 
 	/* Configuration may have changed as a result of Match */
@@ -456,9 +423,11 @@ do_authentication(Authctxt *authctxt)
 	 * If we are not running as root, the user must have the same uid as
 	 * the server.
 	 */
+#ifndef HAVE_CYGWIN
 	if (!use_privsep && getuid() != 0 && authctxt->pw &&
 	    authctxt->pw->pw_uid != getuid())
 		packet_disconnect("Cannot change user when server not running as root.");
+#endif
 
 	/*
 	 * Loop until the user has been authenticated or the connection is
@@ -471,3 +440,5 @@ do_authentication(Authctxt *authctxt)
 	packet_send();
 	packet_write_wait();
 }
+
+#endif /* WITH_SSH1 */

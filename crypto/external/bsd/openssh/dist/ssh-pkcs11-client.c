@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-pkcs11-client.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ssh-pkcs11-client.c,v 1.5 2014/06/24 01:13:21 djm Exp $ */
 /*
  * Copyright (c) 2010 Markus Friedl.  All rights reserved.
@@ -15,11 +14,15 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: ssh-pkcs11-client.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef ENABLE_PKCS11
 
 #include <sys/types.h>
-#include <sys/time.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 #include <sys/socket.h>
 
 #include <stdarg.h>
@@ -235,3 +238,5 @@ pkcs11_del_provider(char *name)
 	buffer_free(&msg);
 	return (ret);
 }
+
+#endif /* ENABLE_PKCS11 */

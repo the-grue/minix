@@ -26,7 +26,10 @@
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/types.h>
+#include "includes.h"
+
+#include <stdlib.h>
+#include <string.h>
 
 #include "rijndael.h"
 

@@ -1,4 +1,3 @@
-/*	$NetBSD: kex.h,v 1.10 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: kex.h,v 1.73 2015/07/30 00:01:34 djm Exp $ */
 
 /*
@@ -34,6 +33,20 @@
 #ifdef WITH_LEAKMALLOC
 #include "leakmalloc.h"
 #endif
+
+#ifdef WITH_OPENSSL
+# ifdef OPENSSL_HAS_ECC
+#  include <openssl/ec.h>
+# else /* OPENSSL_HAS_ECC */
+#  define EC_KEY	void
+#  define EC_GROUP	void
+#  define EC_POINT	void
+# endif /* OPENSSL_HAS_ECC */
+#else /* WITH_OPENSSL */
+# define EC_KEY		void
+# define EC_GROUP	void
+# define EC_POINT	void
+#endif /* WITH_OPENSSL */
 
 #define KEX_COOKIE_LEN	16
 
@@ -150,13 +163,13 @@ char	*kex_alg_list(char);
 char	*kex_names_cat(const char *, const char *);
 int	 kex_assemble_names(const char *, char **);
 
-int	 kex_new(struct ssh *, const char *[PROPOSAL_MAX], struct kex **);
-int	 kex_setup(struct ssh *, const char *[PROPOSAL_MAX]);
+int	 kex_new(struct ssh *, char *[PROPOSAL_MAX], struct kex **);
+int	 kex_setup(struct ssh *, char *[PROPOSAL_MAX]);
 void	 kex_free_newkeys(struct newkeys *);
 void	 kex_free(struct kex *);
 
 int	 kex_buf2prop(struct sshbuf *, int *, char ***);
-int	 kex_prop2buf(struct sshbuf *, const char *proposal[PROPOSAL_MAX]);
+int	 kex_prop2buf(struct sshbuf *, char *proposal[PROPOSAL_MAX]);
 void	 kex_prop_free(char **);
 
 int	 kex_send_kexinit(struct ssh *);
@@ -206,6 +219,12 @@ derive_ssh1_session_id(BIGNUM *, BIGNUM *, u_int8_t[8], u_int8_t[16]);
 
 #if defined(DEBUG_KEX) || defined(DEBUG_KEXDH) || defined(DEBUG_KEXECDH)
 void	dump_digest(char *, u_char *, int);
+#endif
+
+#if !defined(WITH_OPENSSL) || !defined(OPENSSL_HAS_ECC)
+# undef EC_KEY
+# undef EC_GROUP
+# undef EC_POINT
 #endif
 
 #endif

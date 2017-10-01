@@ -1,4 +1,3 @@
-/*	$NetBSD: uuencode.c,v 1.8 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: uuencode.c,v 1.28 2015/04/24 01:36:24 deraadt Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: uuencode.c,v 1.8 2015/07/03 01:00:00 christos Exp $");
+
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <resolv.h>

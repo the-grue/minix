@@ -1,4 +1,3 @@
-/*	$NetBSD: auth.h,v 1.11 2015/07/03 00:59:59 christos Exp $	*/
 /* $OpenBSD: auth.h,v 1.84 2015/05/08 06:41:56 djm Exp $ */
 
 /*
@@ -68,18 +67,16 @@ struct Authctxt {
 #ifdef BSD_AUTH
 	auth_session_t	*as;
 #endif
-#ifdef KRB4
-	char		*krb4_ticket_file;
-#endif 
 	char		**auth_methods;	/* modified from server config */
 	u_int		 num_auth_methods;
 #ifdef KRB5
 	krb5_context	 krb5_ctx;
-	krb5_auth_context krb5_auth_ctx;
 	krb5_ccache	 krb5_fwd_ccache;
 	krb5_principal	 krb5_user;
 	char		*krb5_ticket_file;
+	char		*krb5_ccname;
 #endif
+	Buffer		*loginmsg;
 	void		*methoddata;
 
 	struct sshkey	**prev_userkeys;
@@ -92,12 +89,8 @@ struct Authctxt {
  * the client.
  */
 
-#ifdef USE_PAM
-#include "auth-pam.h"
-#endif
-
 struct Authmethod {
-	const char	*name;
+	char	*name;
 	int	(*userauth)(Authctxt *authctxt);
 	int	*enabled;
 };
@@ -119,7 +112,6 @@ struct KbdintDevice
 	void	(*free_ctx)(void *ctx);
 };
 
-void 	 disable_forwarding(void);
 int      auth_rhosts(struct passwd *, const char *);
 int
 auth_rhosts2(struct passwd *, const char *, const char *, const char *);
@@ -140,20 +132,6 @@ void	 pubkey_auth_info(Authctxt *, const Key *, const char *, ...)
 void	 auth2_record_userkey(Authctxt *, struct sshkey *);
 int	 auth2_userkey_already_used(Authctxt *, struct sshkey *);
 
-#ifdef KRB4
-#include <krb.h>
-int     auth_krb4(Authctxt *, KTEXT, char **, KTEXT);
-int	auth_krb4_password(Authctxt *, const char *);
-void    krb4_cleanup_proc(void *);
-
-#ifdef AFS
-#include <kafs.h>
-int     auth_krb4_tgt(Authctxt *, const char *);
-int     auth_afs_token(Authctxt *, const char *);
-#endif /* AFS */
-
-#endif /* KRB4 */
-
 struct stat;
 int	 auth_secure_path(const char *, struct stat *, const char *, uid_t,
     char *, size_t);
@@ -165,6 +143,18 @@ int	auth_krb5_password(Authctxt *authctxt, const char *password);
 void	krb5_cleanup_proc(Authctxt *authctxt);
 #endif /* KRB5 */
 
+#if defined(USE_SHADOW) && defined(HAS_SHADOW_EXPIRE)
+#include <shadow.h>
+int auth_shadow_acctexpired(struct spwd *);
+int auth_shadow_pwexpired(Authctxt *);
+#endif
+
+#include "auth-pam.h"
+#include "audit.h"
+void remove_kbdint_device(const char *);
+
+void disable_forwarding(void);
+
 void	do_authentication(Authctxt *);
 void	do_authentication2(Authctxt *);
 
@@ -175,6 +165,8 @@ void	auth_log(Authctxt *, int, int, const char *, const char *);
 void	auth_maxtries_exceeded(Authctxt *) __attribute__((noreturn));
 void	userauth_finish(Authctxt *, int, const char *, const char *);
 int	auth_root_allowed(const char *);
+
+void	userauth_send_banner(const char *);
 
 char	*auth2_read_banner(void);
 int	 auth2_methods_valid(const char *, int);
@@ -196,6 +188,7 @@ struct passwd * getpwnamallow(const char *user);
 
 char	*get_challenge(Authctxt *);
 int	verify_response(Authctxt *, const char *);
+void	abandon_challenge_response(Authctxt *);
 
 char	*expand_authorized_keys(const char *, struct passwd *pw);
 char	*authorized_principals_file(struct passwd *);
@@ -225,7 +218,7 @@ void	 auth_debug_reset(void);
 
 struct passwd *fakepw(void);
 
-#define AUTH_FAIL_MSG "Too many authentication failures for %.100s"
+int	 sys_auth_passwd(Authctxt *, const char *);
 
 #define SKEY_PROMPT "\nS/Key Password: "
 

@@ -1,4 +1,3 @@
-/*	$NetBSD: misc.c,v 1.11 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: misc.c,v 1.97 2015/04/24 01:36:00 deraadt Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -26,15 +25,22 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: misc.c,v 1.11 2015/07/03 01:00:00 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include <net/if.h>
-#include <net/if_tun.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
 #include <netinet/in.h>
+#include <netinet/in_systm.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 
@@ -42,14 +48,13 @@ __RCSID("$NetBSD: misc.c,v 1.11 2015/07/03 01:00:00 christos Exp $");
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
-#include <paths.h>
+#ifdef HAVE_PATHS_H
+# include <paths.h>
 #include <pwd.h>
-#include <limits.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+#endif
+#ifdef SSH_TUN_OPENBSD
+#include <net/if.h>
+#endif
 
 #include "xmalloc.h"
 #include "misc.h"
@@ -203,12 +208,20 @@ pwcopy(struct passwd *pw)
 
 	copy->pw_name = xstrdup(pw->pw_name);
 	copy->pw_passwd = xstrdup(pw->pw_passwd);
+#ifdef HAVE_STRUCT_PASSWD_PW_GECOS
 	copy->pw_gecos = xstrdup(pw->pw_gecos);
+#endif
 	copy->pw_uid = pw->pw_uid;
 	copy->pw_gid = pw->pw_gid;
+#ifdef HAVE_STRUCT_PASSWD_PW_EXPIRE
 	copy->pw_expire = pw->pw_expire;
+#endif
+#ifdef HAVE_STRUCT_PASSWD_PW_CHANGE
 	copy->pw_change = pw->pw_change;
+#endif
+#ifdef HAVE_STRUCT_PASSWD_PW_CLASS
 	copy->pw_class = xstrdup(pw->pw_class);
+#endif
 	copy->pw_dir = xstrdup(pw->pw_dir);
 	copy->pw_shell = xstrdup(pw->pw_shell);
 	return copy;
@@ -439,7 +452,7 @@ colon(char *cp)
 
 /* function to assist building execv() arguments */
 void
-addargs(arglist *args, const char *fmt, ...)
+addargs(arglist *args, char *fmt, ...)
 {
 	va_list ap;
 	char *cp;
@@ -466,7 +479,7 @@ addargs(arglist *args, const char *fmt, ...)
 }
 
 void
-replacearg(arglist *args, u_int which, const char *fmt, ...)
+replacearg(arglist *args, u_int which, char *fmt, ...)
 {
 	va_list ap;
 	char *cp;
@@ -507,7 +520,7 @@ char *
 tilde_expand_filename(const char *filename, uid_t uid)
 {
 	const char *path, *sep;
-	char user[128], *ret, *homedir;
+	char user[128], *ret;
 	struct passwd *pw;
 	u_int len, slash;
 
@@ -524,17 +537,12 @@ tilde_expand_filename(const char *filename, uid_t uid)
 		user[slash] = '\0';
 		if ((pw = getpwnam(user)) == NULL)
 			fatal("tilde_expand_filename: No such user %s", user);
-		homedir = pw->pw_dir;
-	} else {
-		if ((pw = getpwuid(uid)) == NULL)	/* ~/path */
-			fatal("tilde_expand_filename: No such uid %ld",
-			    (long)uid);
-		homedir = pw->pw_dir;
-	}
+	} else if ((pw = getpwuid(uid)) == NULL)	/* ~/path */
+		fatal("tilde_expand_filename: No such uid %ld", (long)uid);
 
 	/* Make sure directory has a trailing '/' */
-	len = strlen(homedir);
-	if (len == 0 || homedir[len - 1] != '/')
+	len = strlen(pw->pw_dir);
+	if (len == 0 || pw->pw_dir[len - 1] != '/')
 		sep = "/";
 	else
 		sep = "";
@@ -543,7 +551,7 @@ tilde_expand_filename(const char *filename, uid_t uid)
 	if (path != NULL)
 		filename = path + 1;
 
-	if (xasprintf(&ret, "%s%s%s", homedir, sep, filename) >= PATH_MAX)
+	if (xasprintf(&ret, "%s%s%s", pw->pw_dir, sep, filename) >= PATH_MAX)
 		fatal("tilde_expand_filename: Path too long");
 
 	return (ret);
@@ -639,20 +647,21 @@ read_keyfile_line(FILE *f, const char *filename, char *buf, size_t bufsz,
 int
 tun_open(int tun, int mode)
 {
+#if defined(CUSTOM_SYS_TUN_OPEN)
+	return (sys_tun_open(tun, mode));
+#elif defined(SSH_TUN_OPENBSD)
 	struct ifreq ifr;
-	int fd = -1, sock, flag;
-	const char *tunbase = mode == SSH_TUNMODE_ETHERNET ? "tap" : "tun";
+	char name[100];
+	int fd = -1, sock;
 
 	/* Open the tunnel device */
 	if (tun <= SSH_TUNID_MAX) {
-		snprintf(ifr.ifr_name, sizeof(ifr.ifr_name),
-		    "/dev/%s%d", tunbase, tun);
-		fd = open(ifr.ifr_name, O_RDWR);
+		snprintf(name, sizeof(name), "/dev/tun%d", tun);
+		fd = open(name, O_RDWR);
 	} else if (tun == SSH_TUNID_ANY) {
 		for (tun = 100; tun >= 0; tun--) {
-			snprintf(ifr.ifr_name, sizeof(ifr.ifr_name),
-			    "/dev/%s%d", tunbase, tun);
-			if ((fd = open(ifr.ifr_name, O_RDWR)) >= 0)
+			snprintf(name, sizeof(name), "/dev/tun%d", tun);
+			if ((fd = open(name, O_RDWR)) >= 0)
 				break;
 		}
 	} else {
@@ -661,32 +670,20 @@ tun_open(int tun, int mode)
 	}
 
 	if (fd < 0) {
-		debug("%s: %s open failed: %s", __func__, ifr.ifr_name,
-		    strerror(errno));
+		debug("%s: %s open failed: %s", __func__, name, strerror(errno));
 		return (-1);
 	}
 
+	debug("%s: %s mode %d fd %d", __func__, name, mode, fd);
 
-	/* Turn on tunnel headers */
-	flag = 1;
-	if (mode != SSH_TUNMODE_ETHERNET &&
-	    ioctl(fd, TUNSIFHEAD, &flag) == -1) {
-		debug("%s: ioctl(%d, TUNSIFHEAD, 1): %s", __func__, fd,
-		    strerror(errno));
-		close(fd);
-		return -1;
-	}
-
-	debug("%s: %s mode %d fd %d", __func__, ifr.ifr_name, mode, fd);
 	/* Set the tunnel device operation mode */
-	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s%d", tunbase, tun);
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "tun%d", tun);
 	if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) == -1)
 		goto failed;
 
 	if (ioctl(sock, SIOCGIFFLAGS, &ifr) == -1)
 		goto failed;
 
-#if 0
 	/* Set interface mode */
 	ifr.ifr_flags &= ~IFF_UP;
 	if (mode == SSH_TUNMODE_ETHERNET)
@@ -695,7 +692,6 @@ tun_open(int tun, int mode)
 		ifr.ifr_flags &= ~IFF_LINK0;
 	if (ioctl(sock, SIOCSIFFLAGS, &ifr) == -1)
 		goto failed;
-#endif
 
 	/* Bring interface up */
 	ifr.ifr_flags |= IFF_UP;
@@ -710,9 +706,13 @@ tun_open(int tun, int mode)
 		close(fd);
 	if (sock >= 0)
 		close(sock);
-	debug("%s: failed to set %s mode %d: %s", __func__, ifr.ifr_name,
+	debug("%s: failed to set %s mode %d: %s", __func__, name,
 	    mode, strerror(errno));
 	return (-1);
+#else
+	error("Tunnel interfaces are not supported on this platform");
+	return (-1);
+#endif
 }
 
 void
@@ -883,12 +883,26 @@ ms_to_timeval(struct timeval *tv, int ms)
 time_t
 monotime(void)
 {
+#if defined(HAVE_CLOCK_GETTIME) && \
+    (defined(CLOCK_MONOTONIC) || defined(CLOCK_BOOTTIME))
 	struct timespec ts;
+	static int gettime_failed = 0;
 
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
-		fatal("clock_gettime: %s", strerror(errno));
+	if (!gettime_failed) {
+#if defined(CLOCK_BOOTTIME)
+		if (clock_gettime(CLOCK_BOOTTIME, &ts) == 0)
+			return (ts.tv_sec);
+#endif
+#if defined(CLOCK_MONOTONIC)
+		if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+			return (ts.tv_sec);
+#endif
+		debug3("clock_gettime: %s", strerror(errno));
+		gettime_failed = 1;
+	}
+#endif /* HAVE_CLOCK_GETTIME && (CLOCK_MONOTONIC || CLOCK_BOOTTIME */
 
-	return (ts.tv_sec);
+	return time(NULL);
 }
 
 void
@@ -1088,4 +1102,16 @@ unix_listener(const char *path, int backlog, int unlink_first)
 		return -1;
 	}
 	return sock;
+}
+
+void
+sock_set_v6only(int s)
+{
+#ifdef IPV6_V6ONLY
+	int on = 1;
+
+	debug3("%s: set socket %d IPV6_V6ONLY", __func__, s);
+	if (setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on)) == -1)
+		error("setsockopt IPV6_V6ONLY: %s", strerror(errno));
+#endif
 }

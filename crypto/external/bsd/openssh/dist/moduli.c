@@ -1,4 +1,3 @@
-/*	$NetBSD: moduli.c,v 1.8 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: moduli.c,v 1.30 2015/01/20 23:14:00 deraadt Exp $ */
 /*
  * Copyright 1994 Phil Karn <karn@qualcomm.com>
@@ -37,8 +36,10 @@
  * First step: generate candidate primes (memory intensive)
  * Second step: test primes' safety (processor intensive)
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: moduli.c,v 1.8 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_OPENSSL
 
 #include <sys/param.h>	/* MAX */
 #include <sys/types.h>
@@ -59,6 +60,8 @@ __RCSID("$NetBSD: moduli.c,v 1.8 2015/04/03 23:58:19 christos Exp $");
 #include "dh.h"
 #include "log.h"
 #include "misc.h"
+
+#include "openbsd-compat/openssl-compat.h"
 
 /*
  * File output defines
@@ -802,3 +805,5 @@ prime_test(FILE *in, FILE *out, u_int32_t trials, u_int32_t generator_wanted,
 
 	return (res);
 }
+
+#endif /* WITH_OPENSSL */

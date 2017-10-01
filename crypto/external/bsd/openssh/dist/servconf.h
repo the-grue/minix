@@ -1,4 +1,3 @@
-/*	$NetBSD: servconf.h,v 1.13 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: servconf.h,v 1.120 2015/07/10 06:21:53 markus Exp $ */
 
 /*
@@ -16,10 +15,6 @@
 
 #ifndef SERVCONF_H
 #define SERVCONF_H
-
-#ifdef WITH_LDAP_PUBKEY
-#include "ldapauth.h"
-#endif
 
 #define MAX_PORTS		256	/* Max # ports. */
 
@@ -80,9 +75,6 @@ typedef struct {
 	int     key_regeneration_time;	/* Server key lifetime (seconds). */
 	int     permit_root_login;	/* PERMIT_*, see above */
 	int     ignore_rhosts;	/* Ignore .rhosts and .shosts. */
-	int     ignore_root_rhosts;	/* Ignore .rhosts and .shosts for root;
-					   defaults to ignore_rhosts if not
-					   given. */
 	int     ignore_user_known_hosts;	/* Ignore ~/.ssh/known_hosts
 						 * for RhostsRsaAuth */
 	int     print_motd;	/* If true, print /etc/motd. */
@@ -123,13 +115,8 @@ typedef struct {
 						 * /etc/passwd */
 	int     kerberos_ticket_cleanup;	/* If true, destroy ticket
 						 * file on logout. */
-	int	kerberos_tgt_passing;		/* If true, permit Kerberos TGT
-						 * passing. */
 	int     kerberos_get_afs_token;		/* If true, try to get AFS token if
 						 * authenticated with Kerberos. */
-#ifdef AFS
-	int     afs_token_passing;      /* If true, permit AFS token passing. */
-#endif
 	int     gss_authentication;	/* If true, permit GSSAPI authentication */
 	int     gss_cleanup_creds;	/* If true, destroy cred cache on logout */
 	int     gss_strict_acceptor;	/* If true, restrict the GSSAPI acceptor name */
@@ -182,18 +169,11 @@ typedef struct {
 	u_int num_authkeys_files;	/* Files containing public keys */
 	char   *authorized_keys_files[MAX_AUTHKEYS_FILES];
 
-	int	use_pam;		/* Enable auth via PAM */
-	int     none_enabled;           /* enable NONE cipher switch */
-	int     tcp_rcv_buf_poll;       /* poll tcp rcv window in autotuning kernels*/
-	int	hpn_disabled;		/* disable hpn functionality. false by default */
-	int	hpn_buffer_size;	/* set the hpn buffer size - default 3MB */
-
 	char   *adm_forced_command;
 
+	int	use_pam;		/* Enable auth via PAM */
+
 	int	permit_tun;
-#ifdef WITH_LDAP_PUBKEY
-        ldap_opt_t lpk;
-#endif
 
 	int	num_permitted_opens;
 

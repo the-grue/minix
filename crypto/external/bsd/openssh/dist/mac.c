@@ -1,4 +1,3 @@
-/*	$NetBSD: mac.c,v 1.11 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: mac.c,v 1.32 2015/01/15 18:32:54 naddy Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -25,12 +24,11 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: mac.c,v 1.11 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
 #include "digest.h"
 #include "hmac.h"
@@ -40,12 +38,14 @@ __RCSID("$NetBSD: mac.c,v 1.11 2015/04/03 23:58:19 christos Exp $");
 #include "ssherr.h"
 #include "sshbuf.h"
 
+#include "openbsd-compat/openssl-compat.h"
+
 #define SSH_DIGEST	1	/* SSH_DIGEST_XXX */
 #define SSH_UMAC	2	/* UMAC (not integrated with OpenSSL) */
 #define SSH_UMAC128	3
 
 struct macalg {
-	const char	*name;
+	char		*name;
 	int		type;
 	int		alg;
 	int		truncatebits;	/* truncate digest if != 0 */
@@ -58,8 +58,10 @@ static const struct macalg macs[] = {
 	/* Encrypt-and-MAC (encrypt-and-authenticate) variants */
 	{ "hmac-sha1",				SSH_DIGEST, SSH_DIGEST_SHA1, 0, 0, 0, 0 },
 	{ "hmac-sha1-96",			SSH_DIGEST, SSH_DIGEST_SHA1, 96, 0, 0, 0 },
+#ifdef HAVE_EVP_SHA256
 	{ "hmac-sha2-256",			SSH_DIGEST, SSH_DIGEST_SHA256, 0, 0, 0, 0 },
 	{ "hmac-sha2-512",			SSH_DIGEST, SSH_DIGEST_SHA512, 0, 0, 0, 0 },
+#endif
 	{ "hmac-md5",				SSH_DIGEST, SSH_DIGEST_MD5, 0, 0, 0, 0 },
 	{ "hmac-md5-96",			SSH_DIGEST, SSH_DIGEST_MD5, 96, 0, 0, 0 },
 	{ "hmac-ripemd160",			SSH_DIGEST, SSH_DIGEST_RIPEMD160, 0, 0, 0, 0 },
@@ -70,8 +72,10 @@ static const struct macalg macs[] = {
 	/* Encrypt-then-MAC variants */
 	{ "hmac-sha1-etm@openssh.com",		SSH_DIGEST, SSH_DIGEST_SHA1, 0, 0, 0, 1 },
 	{ "hmac-sha1-96-etm@openssh.com",	SSH_DIGEST, SSH_DIGEST_SHA1, 96, 0, 0, 1 },
+#ifdef HAVE_EVP_SHA256
 	{ "hmac-sha2-256-etm@openssh.com",	SSH_DIGEST, SSH_DIGEST_SHA256, 0, 0, 0, 1 },
 	{ "hmac-sha2-512-etm@openssh.com",	SSH_DIGEST, SSH_DIGEST_SHA512, 0, 0, 0, 1 },
+#endif
 	{ "hmac-md5-etm@openssh.com",		SSH_DIGEST, SSH_DIGEST_MD5, 0, 0, 0, 1 },
 	{ "hmac-md5-96-etm@openssh.com",	SSH_DIGEST, SSH_DIGEST_MD5, 96, 0, 0, 1 },
 	{ "hmac-ripemd160-etm@openssh.com",	SSH_DIGEST, SSH_DIGEST_RIPEMD160, 0, 0, 0, 1 },

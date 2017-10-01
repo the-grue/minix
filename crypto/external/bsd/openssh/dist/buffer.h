@@ -1,4 +1,3 @@
-/*	$NetBSD: buffer.h,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: buffer.h,v 1.25 2014/04/30 05:29:56 djm Exp $ */
 
 /*
@@ -24,9 +23,6 @@
 
 #include "sshbuf.h"
 
-/* move the following to a more appropriate place and name */
-#define BUFFER_MAX_LEN_HPN          0x4000000  /* 64MB */
-
 typedef struct sshbuf Buffer;
 
 #define buffer_init(b)		sshbuf_init(b)
@@ -51,6 +47,8 @@ int	 buffer_get_ret(Buffer *, void *, u_int);
 int	 buffer_consume_ret(Buffer *, u_int);
 int	 buffer_consume_end_ret(Buffer *, u_int);
 
+#include <openssl/objects.h>
+#include <openssl/bn.h>
 void    buffer_put_bignum(Buffer *, const BIGNUM *);
 void    buffer_put_bignum2(Buffer *, const BIGNUM *);
 void	buffer_get_bignum(Buffer *, BIGNUM *);
@@ -89,10 +87,13 @@ char	*buffer_get_cstring_ret(Buffer *, u_int *);
 const void *buffer_get_string_ptr_ret(Buffer *, u_int *);
 int	buffer_get_char_ret(char *, Buffer *);
 
+#ifdef OPENSSL_HAS_ECC
+#include <openssl/ec.h>
 int	buffer_put_ecpoint_ret(Buffer *, const EC_GROUP *, const EC_POINT *);
 void	buffer_put_ecpoint(Buffer *, const EC_GROUP *, const EC_POINT *);
 int	buffer_get_ecpoint_ret(Buffer *, const EC_GROUP *, EC_POINT *);
 void	buffer_get_ecpoint(Buffer *, const EC_GROUP *, EC_POINT *);
+#endif
 
 #endif	/* BUFFER_H */
 

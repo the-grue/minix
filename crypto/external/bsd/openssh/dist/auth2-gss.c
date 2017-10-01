@@ -1,4 +1,3 @@
-/*	$NetBSD: auth2-gss.c,v 1.8 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth2-gss.c,v 1.22 2015/01/19 20:07:45 markus Exp $ */
 
 /*
@@ -26,11 +25,12 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth2-gss.c,v 1.8 2015/04/03 23:58:19 christos Exp $");
 
 #ifdef GSSAPI
 
 #include <sys/types.h>
+
+#include <stdarg.h>
 
 #include "xmalloc.h"
 #include "key.h"
@@ -295,4 +295,5 @@ Authmethod method_gssapi = {
 	userauth_gssapi,
 	&options.gss_authentication
 };
-#endif
+
+#endif /* GSSAPI */

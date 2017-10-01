@@ -1,4 +1,3 @@
-/*	$NetBSD: auth-skey.c,v 1.3 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth-skey.c,v 1.27 2007/01/21 01:41:54 stevesk Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -23,8 +22,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
 #include "includes.h"
-__RCSID("$NetBSD: auth-skey.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #ifdef SKEY
 
@@ -39,12 +38,8 @@ __RCSID("$NetBSD: auth-skey.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 #include "key.h"
 #include "hostfile.h"
 #include "auth.h"
-
-#ifdef GSSAPI
-#include "buffer.h"
 #include "ssh-gss.h"
-#endif
-
+#include "log.h"
 #include "monitor_wrap.h"
 
 static void *
@@ -61,7 +56,8 @@ skey_query(void *ctx, char **name, char **infotxt,
 	char challenge[1024];
 	struct skey skey;
 
-	if (skeychallenge(&skey, authctxt->user, challenge, sizeof(challenge)) == -1)
+	if (_compat_skeychallenge(&skey, authctxt->user, challenge,
+	    sizeof(challenge)) == -1)
 		return -1;
 
 	*name = xstrdup("");

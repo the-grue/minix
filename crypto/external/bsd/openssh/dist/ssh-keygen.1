@@ -1,7 +1,4 @@
-.\"	$NetBSD: ssh-keygen.1,v 1.15 2015/08/21 08:20:59 christos Exp $
 .\"	$OpenBSD: ssh-keygen.1,v 1.127 2015/08/20 19:20:06 naddy Exp $
-.\"
-.\"  -*- nroff -*-
 .\"
 .\" Author: Tatu Ylonen <ylo@cs.hut.fi>
 .\" Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -38,7 +35,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd August 20 2015
+.Dd $Mdocdate: August 20 2015 $
 .Dt SSH-KEYGEN 1
 .Os
 .Sh NAME
@@ -179,7 +176,7 @@ or
 .Pa ~/.ssh/id_rsa .
 Additionally, the system administrator may use this to generate host keys,
 as seen in
-.Pa /etc/rc.d/sshd .
+.Pa /etc/rc .
 .Pp
 Normally this program generates the key and asks for a file in which
 to store the private key.
@@ -495,9 +492,6 @@ Test whether keys have been revoked in a KRL.
 .It Fl q
 Silence
 .Nm ssh-keygen .
-Used by
-.Pa /etc/rc.d/sshd
-when creating a new key.
 .It Fl R Ar hostname
 Removes all keys belonging to
 .Ar hostname

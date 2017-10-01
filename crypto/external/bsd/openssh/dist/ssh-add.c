@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-add.c,v 1.12 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: ssh-add.c,v 1.123 2015/07/03 03:43:18 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -37,15 +36,17 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-add.c,v 1.12 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 
 #include <openssl/evp.h>
+#include "openbsd-compat/openssl-compat.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <pwd.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,10 +70,14 @@ __RCSID("$NetBSD: ssh-add.c,v 1.12 2015/08/13 10:33:21 christos Exp $");
 extern char *__progname;
 
 /* Default files to add */
-static const char *default_files[] = {
+static char *default_files[] = {
+#ifdef WITH_OPENSSL
 	_PATH_SSH_CLIENT_ID_RSA,
 	_PATH_SSH_CLIENT_ID_DSA,
+#ifdef OPENSSL_HAS_ECC
 	_PATH_SSH_CLIENT_ID_ECDSA,
+#endif
+#endif /* WITH_OPENSSL */
 	_PATH_SSH_CLIENT_ID_ED25519,
 #ifdef WITH_SSH1
 	_PATH_SSH_CLIENT_IDENTITY,
@@ -483,7 +488,12 @@ main(int argc, char **argv)
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
 
+	__progname = ssh_get_progname(argv[0]);
+	seed_rng();
+
+#ifdef WITH_OPENSSL
 	OpenSSL_add_all_algorithms();
+#endif
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 

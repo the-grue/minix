@@ -14,8 +14,9 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
+#define SSHBUF_INTERNAL
 #include "includes.h"
-__RCSID("$NetBSD: sshbuf-getput-crypto.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include <sys/types.h>
 #include <stdlib.h>
@@ -23,10 +24,11 @@ __RCSID("$NetBSD: sshbuf-getput-crypto.c,v 1.3 2015/04/03 23:58:19 christos Exp 
 #include <string.h>
 
 #include <openssl/bn.h>
-#include <openssl/ec.h>
+#ifdef OPENSSL_HAS_ECC
+# include <openssl/ec.h>
+#endif /* OPENSSL_HAS_ECC */
 
 #include "ssherr.h"
-#define SSHBUF_INTERNAL
 #include "sshbuf.h"
 
 int
@@ -69,6 +71,7 @@ sshbuf_get_bignum1(struct sshbuf *buf, BIGNUM *v)
 	return 0;
 }
 
+#ifdef OPENSSL_HAS_ECC
 static int
 get_ec(const u_char *d, size_t len, EC_POINT *v, const EC_GROUP *g)
 {
@@ -138,6 +141,7 @@ sshbuf_get_eckey(struct sshbuf *buf, EC_KEY *v)
 	}
 	return 0;	
 }
+#endif /* OPENSSL_HAS_ECC */
 
 int
 sshbuf_put_bignum2(struct sshbuf *buf, const BIGNUM *v)
@@ -183,6 +187,7 @@ sshbuf_put_bignum1(struct sshbuf *buf, const BIGNUM *v)
 	return 0;
 }
 
+#ifdef OPENSSL_HAS_ECC
 int
 sshbuf_put_ec(struct sshbuf *buf, const EC_POINT *v, const EC_GROUP *g)
 {
@@ -215,4 +220,5 @@ sshbuf_put_eckey(struct sshbuf *buf, const EC_KEY *v)
 	return sshbuf_put_ec(buf, EC_KEY_get0_public_key(v),
 	    EC_KEY_get0_group(v));
 }
+#endif /* OPENSSL_HAS_ECC */
 

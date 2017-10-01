@@ -1,4 +1,3 @@
-/*	$NetBSD: readconf.c,v 1.16 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: readconf.c,v 1.239 2015/07/30 00:01:34 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -14,7 +13,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: readconf.c,v 1.16 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -22,21 +21,30 @@ __RCSID("$NetBSD: readconf.c,v 1.16 2015/08/13 10:33:21 christos Exp $");
 #include <sys/un.h>
 
 #include <netinet/in.h>
+#include <netinet/in_systm.h>
 #include <netinet/ip.h>
+#include <arpa/inet.h>
 
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
-#include <paths.h>
+#ifdef HAVE_PATHS_H
+# include <paths.h>
+#endif
 #include <pwd.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <limits.h>
+#ifdef HAVE_UTIL_H
 #include <util.h>
-#include <vis.h>
+#endif
+#if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
+# include <vis.h>
+#endif
 
 #include "xmalloc.h"
 #include "ssh.h"
@@ -50,7 +58,6 @@ __RCSID("$NetBSD: readconf.c,v 1.16 2015/08/13 10:33:21 christos Exp $");
 #include "match.h"
 #include "kex.h"
 #include "mac.h"
-#include "fmt_scaled.h"
 #include "uidswap.h"
 #include "myproposal.h"
 #include "digest.h"
@@ -127,15 +134,6 @@ typedef enum {
 	oGatewayPorts, oExitOnForwardFailure,
 	oPasswordAuthentication, oRSAAuthentication,
 	oChallengeResponseAuthentication, oXAuthLocation,
-#if defined(KRB4) || defined(KRB5)
-	oKerberosAuthentication,
-#endif
-#if defined(AFS) || defined(KRB5)
-	oKerberosTgtPassing,
-#endif
-#ifdef AFS
-	oAFSTokenPassing,
-#endif
 	oIdentityFile, oHostName, oPort, oCipher, oRemoteForward, oLocalForward,
 	oUser, oEscapeChar, oRhostsRSAAuthentication, oProxyCommand,
 	oGlobalKnownHostsFile, oUserKnownHostsFile, oConnectionAttempts,
@@ -160,9 +158,6 @@ typedef enum {
 	oStreamLocalBindMask, oStreamLocalBindUnlink, oRevokedHostKeys,
 	oFingerprintHash, oUpdateHostkeys, oHostbasedKeyTypes,
 	oPubkeyAcceptedKeyTypes,
-	oNoneEnabled, oTcpRcvBufPoll, oTcpRcvBuf, oNoneSwitch, oHPNDisabled,
-	oHPNBufferSize,
-	oSendVersionFirst,
 	oIgnoredUnknownOption, oDeprecated, oUnsupported
 } OpCodes;
 
@@ -192,17 +187,9 @@ static struct {
 	{ "challengeresponseauthentication", oChallengeResponseAuthentication },
 	{ "skeyauthentication", oChallengeResponseAuthentication }, /* alias */
 	{ "tisauthentication", oChallengeResponseAuthentication },  /* alias */
-#if defined(KRB4) || defined(KRB5)
-	{ "kerberosauthentication", oKerberosAuthentication },
-#endif
-#if defined(AFS) || defined(KRB5)
-	{ "kerberostgtpassing", oKerberosTgtPassing },
-	{ "kerberos5tgtpassing", oKerberosTgtPassing },		/* alias */
-	{ "kerberos4tgtpassing", oKerberosTgtPassing },		/* alias */
-#endif
-#ifdef AFS
-	{ "afstokenpassing", oAFSTokenPassing },
-#endif
+	{ "kerberosauthentication", oUnsupported },
+	{ "kerberostgtpassing", oUnsupported },
+	{ "afstokenpassing", oUnsupported },
 #if defined(GSSAPI)
 	{ "gssapiauthentication", oGssAuthentication },
 	{ "gssapidelegatecredentials", oGssDelegateCreds },
@@ -290,14 +277,8 @@ static struct {
 	{ "updatehostkeys", oUpdateHostkeys },
 	{ "hostbasedkeytypes", oHostbasedKeyTypes },
 	{ "pubkeyacceptedkeytypes", oPubkeyAcceptedKeyTypes },
-	{ "noneenabled", oNoneEnabled },
-	{ "tcprcvbufpoll", oTcpRcvBufPoll },
-	{ "tcprcvbuf", oTcpRcvBuf },
-	{ "noneswitch", oNoneSwitch },
-	{ "hpndisabled", oHPNDisabled },
-	{ "hpnbuffersize", oHPNBufferSize },
-	{ "sendversionfirst", oSendVersionFirst },
 	{ "ignoreunknown", oIgnoreUnknown },
+
 	{ NULL, oBadOption }
 };
 
@@ -310,11 +291,12 @@ void
 add_local_forward(Options *options, const struct Forward *newfwd)
 {
 	struct Forward *fwd;
+#ifndef NO_IPPORT_RESERVED_CONCEPT
 	extern uid_t original_real_uid;
-
 	if (newfwd->listen_port < IPPORT_RESERVED && original_real_uid != 0 &&
 	    newfwd->listen_path == NULL)
 		fatal("Privileged ports can only be forwarded by root.");
+#endif
 	options->local_forwards = xreallocarray(options->local_forwards,
 	    options->num_local_forwards + 1,
 	    sizeof(*options->local_forwards));
@@ -434,8 +416,7 @@ default_ssh_port(void)
 static int
 execute_in_shell(const char *cmd)
 {
-	const char *shell;
-	char *command_string;
+	char *shell, *command_string;
 	pid_t pid;
 	int devnull, status;
 	extern uid_t original_real_uid;
@@ -469,11 +450,10 @@ execute_in_shell(const char *cmd)
 			fatal("dup2: %s", strerror(errno));
 		if (devnull > STDERR_FILENO)
 			close(devnull);
-		if (closefrom(STDERR_FILENO + 1) == -1)
-			fatal("closefrom: %s", strerror(errno));
+		closefrom(STDERR_FILENO + 1);
 
-		argv[0] = __UNCONST(shell);
-		argv[1] = __UNCONST("-c");
+		argv[0] = shell;
+		argv[1] = "-c";
 		argv[2] = command_string;
 		argv[3] = NULL;
 
@@ -695,7 +675,7 @@ parse_token(const char *cp, const char *filename, int linenum,
 
 /* Multistate option parsing */
 struct multistate {
-	const char *key;
+	char *key;
 	int value;
 };
 static const struct multistate multistate_flag[] = {
@@ -910,26 +890,9 @@ parse_time:
 		intptr = &options->challenge_response_authentication;
 		goto parse_flag;
 
-#if defined(KRB4) || defined(KRB5)
-	case oKerberosAuthentication:
-		intptr = &options->kerberos_authentication;
-		goto parse_flag;
-#endif
-#if defined(AFS) || defined(KRB5)
-	case oKerberosTgtPassing:
-		intptr = &options->kerberos_tgt_passing;
-		goto parse_flag;
-#endif
-
 	case oGssAuthentication:
 		intptr = &options->gss_authentication;
 		goto parse_flag;
-
-#ifdef AFS
-	case oAFSTokenPassing:
-		intptr = &options->afs_token_passing;
- 		goto parse_flag;
-#endif
 
 	case oGssDelegateCreds:
 		intptr = &options->gss_deleg_creds;
@@ -941,37 +904,6 @@ parse_time:
 
 	case oCheckHostIP:
 		intptr = &options->check_host_ip;
-		goto parse_flag;
-
-	case oNoneEnabled:
-		intptr = &options->none_enabled;
-		goto parse_flag;
- 
-	/* we check to see if the command comes from the */
-	/* command line or not. If it does then enable it */
-	/* otherwise fail. NONE should never be a default configuration */
-	case oNoneSwitch:
-		if(strcmp(filename,"command-line")==0)
-		{		
-		    intptr = &options->none_switch;
-		    goto parse_flag;
-		} else {
-		    error("NoneSwitch is found in %.200s.\nYou may only use this configuration option from the command line", filename);
-		    error("Continuing...");
-		    debug("NoneSwitch directive found in %.200s.", filename);
-		    return 0;
-	        }
-
-	case oHPNDisabled:
-		intptr = &options->hpn_disabled;
-		goto parse_flag;
-
-	case oHPNBufferSize:
-		intptr = &options->hpn_buffer_size;
-		goto parse_int;
-
-	case oTcpRcvBufPoll:
-		intptr = &options->tcp_rcv_buf_poll;
 		goto parse_flag;
 
 	case oVerifyHostKeyDNS:
@@ -1135,10 +1067,6 @@ parse_int:
 
 	case oConnectionAttempts:
 		intptr = &options->connection_attempts;
-		goto parse_int;
-
-	case oTcpRcvBuf:
-		intptr = &options->tcp_rcv_buf;
 		goto parse_int;
 
 	case oCipher:
@@ -1313,7 +1241,6 @@ parse_keytypes:
 		arg = strdelim(&s);
 		if (!arg || *arg == '\0')
 			fatal("%.200s line %d: Missing argument.", filename, linenum);
-		value = 0;	/* To avoid compiler warning... */
 		if (strcmp(arg, "none") == 0)
 			value = SSH_ESCAPECHAR_NONE;
 		else if (arg[1] == '\0')
@@ -1459,10 +1386,6 @@ parse_keytypes:
 		intptr = &options->request_tty;
 		multistate_ptr = multistate_requesttty;
 		goto parse_multistate;
-
-	case oSendVersionFirst:
-		intptr = &options->send_version_first;
-		goto parse_flag;
 
 	case oIgnoreUnknown:
 		charptr = &options->ignored_unknown;
@@ -1677,15 +1600,6 @@ initialize_options(Options * options)
 	options->rsa_authentication = -1;
 	options->pubkey_authentication = -1;
 	options->challenge_response_authentication = -1;
-#if defined(KRB4) || defined(KRB5)
-	options->kerberos_authentication = -1;
-#endif
-#if defined(AFS) || defined(KRB5)
-	options->kerberos_tgt_passing = -1;
-#endif
-#ifdef AFS
-	options->afs_token_passing = -1;
-#endif
 	options->gss_authentication = -1;
 	options->gss_deleg_creds = -1;
 	options->password_authentication = -1;
@@ -1763,13 +1677,6 @@ initialize_options(Options * options)
 	options->update_hostkeys = -1;
 	options->hostbased_key_types = NULL;
 	options->pubkey_key_types = NULL;
-	options->none_switch = -1;
-	options->none_enabled = -1;
-	options->hpn_disabled = -1;
-	options->hpn_buffer_size = -1;
-	options->tcp_rcv_buf_poll = -1;
-	options->tcp_rcv_buf = -1;
-	options->send_version_first = -1;
 }
 
 /*
@@ -1805,7 +1712,7 @@ fill_default_options(Options * options)
 	if (options->exit_on_forward_failure == -1)
 		options->exit_on_forward_failure = 0;
 	if (options->xauth_location == NULL)
-		options->xauth_location = __UNCONST(_PATH_XAUTH);
+		options->xauth_location = _PATH_XAUTH;
 	if (options->fwd_opts.gateway_ports == -1)
 		options->fwd_opts.gateway_ports = 0;
 	if (options->fwd_opts.streamlocal_bind_mask == (mode_t)-1)
@@ -1820,18 +1727,6 @@ fill_default_options(Options * options)
 		options->pubkey_authentication = 1;
 	if (options->challenge_response_authentication == -1)
 		options->challenge_response_authentication = 1;
-#if defined(KRB4) || defined(KRB5)
-	if (options->kerberos_authentication == -1)
-		options->kerberos_authentication = 1;
-#endif
-#if defined(AFS) || defined(KRB5)
-	if (options->kerberos_tgt_passing == -1)
-		options->kerberos_tgt_passing = 1;
-#endif
-#ifdef AFS
-	if (options->afs_token_passing == -1)
-		options->afs_token_passing = 1;
-#endif
 	if (options->gss_authentication == -1)
 		options->gss_authentication = 0;
 	if (options->gss_deleg_creds == -1)
@@ -1880,8 +1775,10 @@ fill_default_options(Options * options)
 			    _PATH_SSH_CLIENT_ID_RSA, 0);
 			add_identity_file(options, "~/",
 			    _PATH_SSH_CLIENT_ID_DSA, 0);
+#ifdef OPENSSL_HAS_ECC
 			add_identity_file(options, "~/",
 			    _PATH_SSH_CLIENT_ID_ECDSA, 0);
+#endif
 			add_identity_file(options, "~/",
 			    _PATH_SSH_CLIENT_ID_ED25519, 0);
 		}
@@ -1920,29 +1817,6 @@ fill_default_options(Options * options)
 		options->server_alive_interval = 0;
 	if (options->server_alive_count_max == -1)
 		options->server_alive_count_max = 3;
-	if (options->none_switch == -1)
-	        options->none_switch = 0;
-	if (options->hpn_disabled == -1)
-	        options->hpn_disabled = 0;
-	if (options->hpn_buffer_size > -1)
-	{
-	  /* if a user tries to set the size to 0 set it to 1KB */
-		if (options->hpn_buffer_size == 0)
-		options->hpn_buffer_size = 1024;
-		/*limit the buffer to 64MB*/
-		if (options->hpn_buffer_size > 65536)
-		{
-			options->hpn_buffer_size = 65536*1024;
-			debug("User requested buffer larger than 64MB. Request reverted to 64MB");
-		}
-		debug("hpn_buffer_size set to %d", options->hpn_buffer_size);
-	}
-	if (options->tcp_rcv_buf == 0)
-		options->tcp_rcv_buf = 1;
-	if (options->tcp_rcv_buf > -1) 
-		options->tcp_rcv_buf *=1024;
-	if (options->tcp_rcv_buf_poll == -1)
-		options->tcp_rcv_buf_poll = 1;
 	if (options->control_master == -1)
 		options->control_master = 0;
 	if (options->control_persist == -1) {
@@ -1990,8 +1864,6 @@ fill_default_options(Options * options)
 	    &options->pubkey_key_types) != 0)
 		fatal("%s: kex_assemble_names failed", __func__);
 
-	if (options->send_version_first == -1)
-		options->send_version_first = 1;
 #define CLEAR_ON_NONE(v) \
 	do { \
 		if (option_clear_or_none(v)) { \

@@ -1,4 +1,3 @@
-/*	$NetBSD: atomicio.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: atomicio.c,v 1.27 2015/01/16 06:40:12 deraadt Exp $ */
 /*
  * Copyright (c) 2006 Damien Miller. All rights reserved.
@@ -28,12 +27,18 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: atomicio.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/param.h>
 #include <sys/uio.h>
 
 #include <errno.h>
+#ifdef HAVE_POLL_H
 #include <poll.h>
+#else
+# ifdef HAVE_SYS_POLL_H
+#  include <sys/poll.h>
+# endif
+#endif
 #include <string.h>
 #include <unistd.h>
 #include <limits.h>
@@ -52,20 +57,20 @@ atomicio6(ssize_t (*f) (int, void *, size_t), int fd, void *_s, size_t n,
 	ssize_t res;
 	struct pollfd pfd;
 
+#ifndef BROKEN_READ_COMPARISON
 	pfd.fd = fd;
-	/*
-	 * check for vwrite instead of read to avoid read being renamed
-	 * by SSP issues
-	 */
-	pfd.events = f == vwrite ? POLLOUT : POLLIN;
+	pfd.events = f == read ? POLLIN : POLLOUT;
+#endif
 	while (n > pos) {
 		res = (f) (fd, s + pos, n - pos);
 		switch (res) {
 		case -1:
 			if (errno == EINTR)
 				continue;
-			if (errno == EAGAIN) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#ifndef BROKEN_READ_COMPARISON
 				(void)poll(&pfd, 1, -1);
+#endif
 				continue;
 			}
 			return 0;
@@ -109,16 +114,20 @@ atomiciov6(ssize_t (*f) (int, const struct iovec *, int), int fd,
 	/* Make a copy of the iov array because we may modify it below */
 	memcpy(iov, _iov, iovcnt * sizeof(*_iov));
 
+#ifndef BROKEN_READV_COMPARISON
 	pfd.fd = fd;
 	pfd.events = f == readv ? POLLIN : POLLOUT;
+#endif
 	for (; iovcnt > 0 && iov[0].iov_len > 0;) {
 		res = (f) (fd, iov, iovcnt);
 		switch (res) {
 		case -1:
 			if (errno == EINTR)
 				continue;
-			if (errno == EAGAIN) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#ifndef BROKEN_READV_COMPARISON
 				(void)poll(&pfd, 1, -1);
+#endif
 				continue;
 			}
 			return 0;

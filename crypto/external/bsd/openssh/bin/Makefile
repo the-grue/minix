@@ -1,6 +1,7 @@
 #	$NetBSD: Makefile,v 1.3 2010/11/21 19:19:21 adam Exp $
 
 .include <bsd.own.mk>
+.include <bsd.obj.mk>
 
 SSHDIST?= ${NETBSDSRCDIR}/crypto/external/bsd/openssh/dist
 

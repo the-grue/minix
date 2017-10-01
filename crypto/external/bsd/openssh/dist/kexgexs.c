@@ -1,4 +1,3 @@
-/*	$NetBSD: kexgexs.c,v 1.9 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: kexgexs.c,v 1.25 2015/04/13 02:04:08 djm Exp $ */
 /*
  * Copyright (c) 2000 Niels Provos.  All rights reserved.
@@ -26,9 +25,12 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: kexgexs.c,v 1.9 2015/07/03 01:00:00 christos Exp $");
+
+#ifdef WITH_OPENSSL
+
 #include <sys/param.h>	/* MIN MAX */
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
@@ -249,3 +251,4 @@ input_kex_dh_gex_init(int type, u_int32_t seq, void *ctxt)
 	free(signature);
 	return r;
 }
+#endif /* WITH_OPENSSL */

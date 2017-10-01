@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-gss.h,v 1.5 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ssh-gss.h,v 1.11 2014/02/26 20:28:44 djm Exp $ */
 /*
  * Copyright (c) 2001-2003 Simon Wilkinson. All rights reserved.
@@ -29,7 +28,28 @@
 
 #ifdef GSSAPI
 
+#ifdef HAVE_GSSAPI_H
 #include <gssapi.h>
+#elif defined(HAVE_GSSAPI_GSSAPI_H)
+#include <gssapi/gssapi.h>
+#endif
+
+#ifdef KRB5
+# ifndef HEIMDAL
+#  ifdef HAVE_GSSAPI_GENERIC_H
+#   include <gssapi_generic.h>
+#  elif defined(HAVE_GSSAPI_GSSAPI_GENERIC_H)
+#   include <gssapi/gssapi_generic.h>
+#  endif
+
+/* Old MIT Kerberos doesn't seem to define GSS_NT_HOSTBASED_SERVICE */
+
+#  if !HAVE_DECL_GSS_C_NT_HOSTBASED_SERVICE
+#   define GSS_C_NT_HOSTBASED_SERVICE gss_nt_service_name
+#  endif /* !HAVE_DECL_GSS_C_NT_... */
+
+# endif /* !HEIMDAL */
+#endif /* KRB5 */
 
 /* draft-ietf-secsh-gsskeyex-06 */
 #define SSH2_MSG_USERAUTH_GSSAPI_RESPONSE		60
@@ -57,8 +77,8 @@ typedef struct {
 } ssh_gssapi_client;
 
 typedef struct ssh_gssapi_mech_struct {
-	const char *enc_name;
-	const char *name;
+	char *enc_name;
+	char *name;
 	gss_OID_desc oid;
 	int (*dochild) (ssh_gssapi_client *);
 	int (*userok) (ssh_gssapi_client *, char *);

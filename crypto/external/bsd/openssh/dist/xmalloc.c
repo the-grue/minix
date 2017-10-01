@@ -1,4 +1,3 @@
-/*	$NetBSD: xmalloc.c,v 1.6 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: xmalloc.c,v 1.32 2015/04/24 01:36:01 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -15,10 +14,11 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: xmalloc.c,v 1.6 2015/07/03 01:00:00 christos Exp $");
-#include <sys/param.h>
+
 #include <stdarg.h>
+#ifdef HAVE_STDINT_H
 #include <stdint.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -1,4 +1,3 @@
-/*	$NetBSD: sshconnect.c,v 1.13 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: sshconnect.c,v 1.263 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -15,31 +14,37 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: sshconnect.c,v 1.13 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/param.h>	/* roundup */
 #include <sys/types.h>
-#include <sys/param.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
-#include <sys/time.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 
 #include <netinet/in.h>
-#include <rpc/rpc.h>
+#include <arpa/inet.h>
 
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#ifdef HAVE_PATHS_H
 #include <paths.h>
-#include <signal.h>
+#endif
 #include <pwd.h>
+#include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "xmalloc.h"
+#include "key.h"
+#include "hostfile.h"
 #include "ssh.h"
 #include "rsa.h"
 #include "buffer.h"
@@ -104,7 +109,7 @@ ssh_proxy_fdpass_connect(const char *host, u_short port,
 	char *command_string;
 	int sp[2], sock;
 	pid_t pid;
-	const char *shell;
+	char *shell;
 
 	if ((shell = getenv("SHELL")) == NULL)
 		shell = _PATH_BSHELL;
@@ -141,8 +146,8 @@ ssh_proxy_fdpass_connect(const char *host, u_short port,
 		 * Stderr is left as it is so that error messages get
 		 * printed on the user's terminal.
 		 */
-		argv[0] = __UNCONST(shell);
-		argv[1] = __UNCONST("-c");
+		argv[0] = shell;
+		argv[1] = "-c";
 		argv[2] = command_string;
 		argv[3] = NULL;
 
@@ -185,7 +190,7 @@ ssh_proxy_connect(const char *host, u_short port, const char *proxy_command)
 	char *shell;
 
 	if ((shell = getenv("SHELL")) == NULL || *shell == '\0')
-		shell = __UNCONST(_PATH_BSHELL);
+		shell = _PATH_BSHELL;
 
 	/* Create pipes for communicating with the proxy. */
 	if (pipe(pin) < 0 || pipe(pout) < 0)
@@ -219,7 +224,7 @@ ssh_proxy_connect(const char *host, u_short port, const char *proxy_command)
 		/* Stderr is left as it is so that error messages get
 		   printed on the user's terminal. */
 		argv[0] = shell;
-		argv[1] = __UNCONST("-c");
+		argv[1] = "-c";
 		argv[2] = command_string;
 		argv[3] = NULL;
 
@@ -262,30 +267,6 @@ ssh_kill_proxy_command(void)
 }
 
 /*
- * Set TCP receive buffer if requested.
- * Note: tuning needs to happen after the socket is
- * created but before the connection happens
- * so winscale is negotiated properly -cjr
- */
-static void
-ssh_set_socket_recvbuf(int sock)
-{
-	void *buf = (void *)&options.tcp_rcv_buf;
-	int sz = sizeof(options.tcp_rcv_buf);
-	int socksize;
-	socklen_t socksizelen = sizeof(int);
-
-	debug("setsockopt Attempting to set SO_RCVBUF to %d", options.tcp_rcv_buf);
-	if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, buf, sz) >= 0) {
-	  getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &socksize, &socksizelen);
-	  debug("setsockopt SO_RCVBUF: %.100s %d", strerror(errno), socksize);
-	}
-	else
-		error("Couldn't set socket receive buffer to %d: %.100s",
-		    options.tcp_rcv_buf, strerror(errno));
-}
-
-/*
  * Creates a (possibly privileged) socket for use as the ssh connection.
  */
 static int
@@ -301,9 +282,6 @@ ssh_create_socket(int privileged, struct addrinfo *ai)
 	}
 	fcntl(sock, F_SETFD, FD_CLOEXEC);
 
-	if (options.tcp_rcv_buf > 0)
-		ssh_set_socket_recvbuf(sock);
-	
 	/* Bind the socket to an alternative local IP address */
 	if (options.bind_address == NULL && !privileged)
 		return sock;
@@ -482,10 +460,7 @@ ssh_connect_direct(const char *host, struct addrinfo *aitop,
 			/* Create a socket for connecting. */
 			sock = ssh_create_socket(needpriv, ai);
 			if (sock < 0)
-				/*
-				 * Any serious error is already output,
-				 * at least in the debug case.
-				 */
+				/* Any error is already output */
 				continue;
 
 			if (timeout_connect(sock, ai->ai_addr, ai->ai_addrlen,
@@ -770,6 +745,22 @@ get_hostfile_hostname_ipaddr(char *hostname, struct sockaddr *hostaddr,
     u_short port, char **hostfile_hostname, char **hostfile_ipaddr)
 {
 	char ntop[NI_MAXHOST];
+	socklen_t addrlen;
+
+	switch (hostaddr == NULL ? -1 : hostaddr->sa_family) {
+	case -1:
+		addrlen = 0;
+		break;
+	case AF_INET:
+		addrlen = sizeof(struct sockaddr_in);
+		break;
+	case AF_INET6:
+		addrlen = sizeof(struct sockaddr_in6);
+		break;
+	default:
+		addrlen = sizeof(struct sockaddr);
+		break;
+	}
 
 	/*
 	 * We don't have the remote ip-address for connections
@@ -777,7 +768,7 @@ get_hostfile_hostname_ipaddr(char *hostname, struct sockaddr *hostaddr,
 	 */
 	if (hostfile_ipaddr != NULL) {
 		if (options.proxy_command == NULL) {
-			if (getnameinfo(hostaddr, hostaddr->sa_len,
+			if (getnameinfo(hostaddr, addrlen,
 			    ntop, sizeof(ntop), NULL, 0, NI_NUMERICHOST) != 0)
 			fatal("%s: getnameinfo failed", __func__);
 			*hostfile_ipaddr = put_host_port(ntop, port);
@@ -1072,7 +1063,7 @@ check_host_key(char *hostname, struct sockaddr *hostaddr, u_short port,
 		if (readonly == ROQUIET)
 			goto fail;
 		if (options.check_host_ip && host_ip_differ) {
-			const char *key_msg;
+			char *key_msg;
 			if (ip_status == HOST_NEW)
 				key_msg = "is unknown";
 			else if (ip_status == HOST_OK)
@@ -1463,7 +1454,7 @@ warn_changed_key(Key *host_key)
 int
 ssh_local_cmd(const char *args)
 {
-	const char *shell;
+	char *shell;
 	pid_t pid;
 	int status;
 	void (*osighand)(int);

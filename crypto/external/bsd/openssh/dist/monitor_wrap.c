@@ -1,4 +1,3 @@
-/*	$NetBSD: monitor_wrap.c,v 1.12 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: monitor_wrap.c,v 1.85 2015/05/01 03:23:51 djm Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
@@ -27,14 +26,14 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: monitor_wrap.c,v 1.12 2015/07/03 01:00:00 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/uio.h>
-#include <sys/queue.h>
 
 #include <errno.h>
 #include <pwd.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -42,8 +41,10 @@ __RCSID("$NetBSD: monitor_wrap.c,v 1.12 2015/07/03 01:00:00 christos Exp $");
 #ifdef WITH_OPENSSL
 #include <openssl/bn.h>
 #include <openssl/dh.h>
+#include <openssl/evp.h>
 #endif
 
+#include "openbsd-compat/sys-queue.h"
 #include "xmalloc.h"
 #include "ssh.h"
 #ifdef WITH_OPENSSL
@@ -59,7 +60,13 @@ __RCSID("$NetBSD: monitor_wrap.c,v 1.12 2015/07/03 01:00:00 christos Exp $");
 #include "packet.h"
 #include "mac.h"
 #include "log.h"
-#include <zlib.h>
+#ifdef TARGET_OS_MAC    /* XXX Broken krb5 headers on Mac */
+#undef TARGET_OS_MAC
+#include "zlib.h"
+#define TARGET_OS_MAC 1
+#else
+#include "zlib.h"
+#endif
 #include "monitor.h"
 #ifdef GSSAPI
 #include "ssh-gss.h"
@@ -67,11 +74,6 @@ __RCSID("$NetBSD: monitor_wrap.c,v 1.12 2015/07/03 01:00:00 christos Exp $");
 #include "monitor_wrap.h"
 #include "atomicio.h"
 #include "monitor_fdpass.h"
-#ifdef USE_PAM
-#include "misc.h"
-#include "servconf.h"
-#include <security/pam_appl.h>
-#endif
 #include "misc.h"
 #include "uuencode.h"
 
@@ -264,8 +266,12 @@ mm_getpwnamallow(const char *username)
 		fatal("%s: struct passwd size mismatch", __func__);
 	pw->pw_name = buffer_get_string(&m, NULL);
 	pw->pw_passwd = buffer_get_string(&m, NULL);
+#ifdef HAVE_STRUCT_PASSWD_PW_GECOS
 	pw->pw_gecos = buffer_get_string(&m, NULL);
+#endif
+#ifdef HAVE_STRUCT_PASSWD_PW_CLASS
 	pw->pw_class = buffer_get_string(&m, NULL);
+#endif
 	pw->pw_dir = buffer_get_string(&m, NULL);
 	pw->pw_shell = buffer_get_string(&m, NULL);
 
@@ -341,7 +347,7 @@ mm_inform_authserv(char *service, char *style)
 
 /* Do the password authentication */
 int
-mm_auth_password(Authctxt *authctxt, const char *password)
+mm_auth_password(Authctxt *authctxt, char *password)
 {
 	Buffer m;
 	int authenticated = 0;
@@ -608,7 +614,6 @@ mm_sshpam_init_ctx(Authctxt *authctxt)
 
 	debug3("%s", __func__);
 	buffer_init(&m);
-	buffer_put_cstring(&m, authctxt->user);
 	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_PAM_INIT_CTX, &m);
 	debug3("%s: waiting for MONITOR_ANS_PAM_INIT_CTX", __func__);
 	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_PAM_INIT_CTX, &m);
@@ -641,7 +646,7 @@ mm_sshpam_query(void *ctx, char **name, char **info,
 	*info = buffer_get_string(&m, NULL);
 	*num = buffer_get_int(&m);
 	if (*num > PAM_MAX_NUM_MSG)
-		fatal("%s: received %u PAM messages, expected <= %u",
+		fatal("%s: recieved %u PAM messages, expected <= %u",
 		    __func__, *num, PAM_MAX_NUM_MSG);
 	*prompts = xcalloc((*num + 1), sizeof(char *));
 	*echo_on = xcalloc((*num + 1), sizeof(u_int));
@@ -722,7 +727,6 @@ mm_ssh1_session_key(BIGNUM *num)
 }
 #endif
 
-#if defined(BSD_AUTH) || defined(SKEY)
 static void
 mm_chall_setup(char **name, char **infotxt, u_int *numprompts,
     char ***prompts, u_int **echo_on)
@@ -734,9 +738,7 @@ mm_chall_setup(char **name, char **infotxt, u_int *numprompts,
 	*echo_on = xcalloc(*numprompts, sizeof(u_int));
 	(*echo_on)[0] = 0;
 }
-#endif
 
-#ifdef BSD_AUTH
 int
 mm_bsdauth_query(void *ctx, char **name, char **infotxt,
    u_int *numprompts, char ***prompts, u_int **echo_on)
@@ -793,7 +795,6 @@ mm_bsdauth_respond(void *ctx, u_int numresponses, char **responses)
 
 	return ((authok == 0) ? -1 : 0);
 }
-#endif
 
 #ifdef SKEY
 int
@@ -970,6 +971,36 @@ mm_auth_rsa_verify_response(Key *key, BIGNUM *p, u_char response[16])
 }
 #endif
 
+#ifdef SSH_AUDIT_EVENTS
+void
+mm_audit_event(ssh_audit_event_t event)
+{
+	Buffer m;
+
+	debug3("%s entering", __func__);
+
+	buffer_init(&m);
+	buffer_put_int(&m, event);
+
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_AUDIT_EVENT, &m);
+	buffer_free(&m);
+}
+
+void
+mm_audit_run_command(const char *command)
+{
+	Buffer m;
+
+	debug3("%s entering command %s", __func__, command);
+
+	buffer_init(&m);
+	buffer_put_cstring(&m, command);
+
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_AUDIT_COMMAND, &m);
+	buffer_free(&m);
+}
+#endif /* SSH_AUDIT_EVENTS */
+
 #ifdef GSSAPI
 OM_uint32
 mm_ssh_gssapi_server_ctx(Gssctxt **ctx, gss_OID goid)
@@ -1056,73 +1087,3 @@ mm_ssh_gssapi_userok(char *user)
 }
 #endif /* GSSAPI */
 
-#ifdef KRB4
-int
-mm_auth_krb4(Authctxt *authctxt, void *_auth, char **client, void *_reply)
-{
-	KTEXT auth, reply;
- 	Buffer m;
-	u_int rlen;
-	int success = 0;
-	char *p;
-
-	debug3("%s entering", __func__);
-	auth = _auth;
-	reply = _reply;
-
-	buffer_init(&m);
-	buffer_put_string(&m, auth->dat, auth->length);
-
-	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_KRB4, &m);
-	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_KRB4, &m);
-
-	success = buffer_get_int(&m);
-	if (success) {
-		*client = buffer_get_string(&m, NULL);
-		p = buffer_get_string(&m, &rlen);
-		if (rlen >= MAX_KTXT_LEN)
-			fatal("%s: reply from monitor too large", __func__);
-		reply->length = rlen;
-		memcpy(reply->dat, p, rlen);
-		memset(p, 0, rlen);
-		free(p);
-	}
-	buffer_free(&m);
-	return (success);
-}
-#endif
-
-#ifdef KRB5
-int
-mm_auth_krb5(void *ctx, void *argp, char **userp, void *resp)
-{
-	krb5_data *tkt, *reply;
-	Buffer m;
-	int success;
-
-	debug3("%s entering", __func__);
-	tkt = (krb5_data *) argp;
-	reply = (krb5_data *) resp;
-
-	buffer_init(&m);
-	buffer_put_string(&m, tkt->data, tkt->length);
-
-	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_KRB5, &m);
-	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_KRB5, &m);
-
-	success = buffer_get_int(&m);
-	if (success) {
-		u_int len;
-
-		*userp = buffer_get_string(&m, NULL);
-		reply->data = buffer_get_string(&m, &len);
-		reply->length = len;
-	} else {
-		memset(reply, 0, sizeof(*reply));
-		*userp = NULL;
-	}
-
-	buffer_free(&m);
-	return (success);
-}
-#endif

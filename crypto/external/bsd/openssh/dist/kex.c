@@ -1,4 +1,3 @@
-/*	$NetBSD: kex.c,v 1.12 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: kex.c,v 1.109 2015/07/30 00:01:34 djm Exp $ */
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
@@ -25,10 +24,11 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: kex.c,v 1.12 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/param.h>	/* MAX roundup */
 
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,19 +49,26 @@ __RCSID("$NetBSD: kex.c,v 1.12 2015/08/13 10:33:21 christos Exp $");
 #include "misc.h"
 #include "dispatch.h"
 #include "monitor.h"
-#include "canohost.h"
 #include "roaming.h"
 
 #include "ssherr.h"
 #include "sshbuf.h"
 #include "digest.h"
 
+#if OPENSSL_VERSION_NUMBER >= 0x00907000L
+# if defined(HAVE_EVP_SHA256)
+# define evp_ssh_sha256 EVP_sha256
+# else
+extern const EVP_MD *evp_ssh_sha256(void);
+# endif
+#endif
+
 /* prototype */
 static int kex_choose_conf(struct ssh *);
 static int kex_input_newkeys(int, u_int32_t, void *);
 
 struct kexalg {
-	const char *name;
+	char *name;
 	u_int type;
 	int ec_nid;
 	int hash_alg;
@@ -71,16 +78,24 @@ static const struct kexalg kexalgs[] = {
 	{ KEX_DH1, KEX_DH_GRP1_SHA1, 0, SSH_DIGEST_SHA1 },
 	{ KEX_DH14, KEX_DH_GRP14_SHA1, 0, SSH_DIGEST_SHA1 },
 	{ KEX_DHGEX_SHA1, KEX_DH_GEX_SHA1, 0, SSH_DIGEST_SHA1 },
+#ifdef HAVE_EVP_SHA256
 	{ KEX_DHGEX_SHA256, KEX_DH_GEX_SHA256, 0, SSH_DIGEST_SHA256 },
+#endif /* HAVE_EVP_SHA256 */
+#ifdef OPENSSL_HAS_ECC
 	{ KEX_ECDH_SHA2_NISTP256, KEX_ECDH_SHA2,
 	    NID_X9_62_prime256v1, SSH_DIGEST_SHA256 },
 	{ KEX_ECDH_SHA2_NISTP384, KEX_ECDH_SHA2, NID_secp384r1,
 	    SSH_DIGEST_SHA384 },
+# ifdef OPENSSL_HAS_NISTP521
 	{ KEX_ECDH_SHA2_NISTP521, KEX_ECDH_SHA2, NID_secp521r1,
 	    SSH_DIGEST_SHA512 },
-#endif
+# endif /* OPENSSL_HAS_NISTP521 */
+#endif /* OPENSSL_HAS_ECC */
+#endif /* WITH_OPENSSL */
+#if defined(HAVE_EVP_SHA256) || !defined(WITH_OPENSSL)
 	{ KEX_CURVE25519_SHA256, KEX_C25519_SHA256, 0, SSH_DIGEST_SHA256 },
-	{ NULL, (u_int)-1, -1, -1},
+#endif /* HAVE_EVP_SHA256 || !WITH_OPENSSL */
+	{ NULL, -1, -1, -1},
 };
 
 char *
@@ -204,7 +219,7 @@ kex_assemble_names(const char *def, char **list)
 
 /* put algorithm proposal into buffer */
 int
-kex_prop2buf(struct sshbuf *b, const char *proposal[PROPOSAL_MAX])
+kex_prop2buf(struct sshbuf *b, char *proposal[PROPOSAL_MAX])
 {
 	u_int i;
 	int r;
@@ -417,7 +432,7 @@ kex_input_kexinit(int type, u_int32_t seq, void *ctxt)
 }
 
 int
-kex_new(struct ssh *ssh, const char *proposal[PROPOSAL_MAX], struct kex **kexp)
+kex_new(struct ssh *ssh, char *proposal[PROPOSAL_MAX], struct kex **kexp)
 {
 	struct kex *kex;
 	int r;
@@ -481,9 +496,11 @@ kex_free(struct kex *kex)
 #ifdef WITH_OPENSSL
 	if (kex->dh)
 		DH_free(kex->dh);
+#ifdef OPENSSL_HAS_ECC
 	if (kex->ec_client_key)
 		EC_KEY_free(kex->ec_client_key);
-#endif
+#endif /* OPENSSL_HAS_ECC */
+#endif /* WITH_OPENSSL */
 	for (mode = 0; mode < MODE_MAX; mode++) {
 		kex_free_newkeys(kex->newkeys[mode]);
 		kex->newkeys[mode] = NULL;
@@ -498,7 +515,7 @@ kex_free(struct kex *kex)
 }
 
 int
-kex_setup(struct ssh *ssh, const char *proposal[PROPOSAL_MAX])
+kex_setup(struct ssh *ssh, char *proposal[PROPOSAL_MAX])
 {
 	int r;
 
@@ -519,7 +536,6 @@ choose_enc(struct sshenc *enc, char *client, char *server)
 
 	if (name == NULL)
 		return SSH_ERR_NO_CIPHER_ALG_MATCH;
-
 	if ((enc->cipher = cipher_by_name(name)) == NULL)
 		return SSH_ERR_INTERNAL_ERROR;
 	enc->name = name;
@@ -635,7 +651,6 @@ kex_choose_conf(struct ssh *ssh)
 	char **cprop, **sprop;
 	int nenc, nmac, ncomp;
 	u_int mode, ctos, need, dh_need, authlen;
-	int log_flag = 0;
 	int r, first_kex_follows;
 
 	if ((r = kex_buf2prop(kex->my, NULL, &my)) != 0 ||
@@ -694,37 +709,11 @@ kex_choose_conf(struct ssh *ssh)
 			peer[ncomp] = NULL;
 			goto out;
 		}
-		debug("REQUESTED ENC.NAME is '%s'", newkeys->enc.name);
-		if (strcmp(newkeys->enc.name, "none") == 0) {
-			int auth_flag;
-
-			auth_flag = ssh_packet_authentication_state();
-			debug("Requesting NONE. Authflag is %d", auth_flag);			
-			if (auth_flag == 1) {
-				debug("None requested post authentication.");
-			} else {
-				fatal("Pre-authentication none cipher requests are not allowed.");
-			}
-		} 
 		debug("kex: %s %s %s %s",
 		    ctos ? "client->server" : "server->client",
 		    newkeys->enc.name,
 		    authlen == 0 ? newkeys->mac.name : "<implicit>",
 		    newkeys->comp.name);
-		/* client starts withctos = 0 && log flag = 0 and no log*/
-		/* 2nd client pass ctos=1 and flag = 1 so no log*/
-		/* server starts with ctos =1 && log_flag = 0 so log */
-		/* 2nd sever pass ctos = 1 && log flag = 1 so no log*/
-		/* -cjr*/
-		if (ctos && !log_flag) {
-			logit("SSH: Server;Ltype: Kex;Remote: %s-%d;Enc: %s;MAC: %s;Comp: %s",
-			      get_remote_ipaddr(),
-			      get_remote_port(),
-			      newkeys->enc.name,
-			      newkeys->mac.name,
-			      newkeys->comp.name);
-		}
-		log_flag = 1;
 	}
 	if ((r = choose_kex(kex, cprop[PROPOSAL_KEX_ALGS],
 	    sprop[PROPOSAL_KEX_ALGS])) != 0) {

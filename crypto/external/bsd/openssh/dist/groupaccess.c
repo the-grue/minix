@@ -1,4 +1,3 @@
-/*	$NetBSD: groupaccess.c,v 1.6 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: groupaccess.c,v 1.16 2015/05/04 06:10:48 djm Exp $ */
 /*
  * Copyright (c) 2001 Kevin Steves.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: groupaccess.c,v 1.6 2015/07/03 01:00:00 christos Exp $");
+
 #include <sys/types.h>
 
 #include <grp.h>
@@ -41,7 +40,7 @@ __RCSID("$NetBSD: groupaccess.c,v 1.6 2015/07/03 01:00:00 christos Exp $");
 #include "log.h"
 
 static int ngroups;
-static char *groups_byname[NGROUPS_MAX + 1];	/* +1 for base/primary group */
+static char **groups_byname;
 
 /*
  * Initialize group access list for user with primary (base) and
@@ -50,19 +49,27 @@ static char *groups_byname[NGROUPS_MAX + 1];	/* +1 for base/primary group */
 int
 ga_init(const char *user, gid_t base)
 {
-	gid_t groups_bygid[NGROUPS_MAX + 1];
+	gid_t *groups_bygid;
 	int i, j;
 	struct group *gr;
 
 	if (ngroups > 0)
 		ga_free();
 
-	ngroups = sizeof(groups_bygid) / sizeof(gid_t);
+	ngroups = NGROUPS_MAX;
+#if defined(HAVE_SYSCONF) && defined(_SC_NGROUPS_MAX)
+	ngroups = MAX(NGROUPS_MAX, sysconf(_SC_NGROUPS_MAX));
+#endif
+
+	groups_bygid = xcalloc(ngroups, sizeof(*groups_bygid));
+	groups_byname = xcalloc(ngroups, sizeof(*groups_byname));
+
 	if (getgrouplist(user, base, groups_bygid, &ngroups) == -1)
 		logit("getgrouplist: groups list too small");
 	for (i = 0, j = 0; i < ngroups; i++)
 		if ((gr = getgrgid(groups_bygid[i])) != NULL)
 			groups_byname[j++] = xstrdup(gr->gr_name);
+	free(groups_bygid);
 	return (ngroups = j);
 }
 
@@ -116,5 +123,6 @@ ga_free(void)
 		for (i = 0; i < ngroups; i++)
 			free(groups_byname[i]);
 		ngroups = 0;
+		free(groups_byname);
 	}
 }

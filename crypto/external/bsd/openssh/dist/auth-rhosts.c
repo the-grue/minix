@@ -1,4 +1,3 @@
-/*	$NetBSD: auth-rhosts.c,v 1.5 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth-rhosts.c,v 1.46 2014/12/23 22:42:48 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -16,16 +15,18 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth-rhosts.c,v 1.5 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include <fcntl.h>
-#include <netgroup.h>
+#ifdef HAVE_NETGROUP_H
+# include <netgroup.h>
+#endif
 #include <pwd.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "packet.h"
@@ -308,8 +309,7 @@ auth_rhosts2_raw(struct passwd *pw, const char *client_user, const char *hostnam
 		 * Check if we have been configured to ignore .rhosts
 		 * and .shosts files.
 		 */
-		if ((pw->pw_uid == 0 && options.ignore_root_rhosts) ||
-		    (pw->pw_uid != 0 && options.ignore_rhosts)) {
+		if (options.ignore_rhosts) {
 			auth_debug_add("Server has been configured to "
 			    "ignore %.100s.", rhosts_files[rhosts_file_index]);
 			continue;

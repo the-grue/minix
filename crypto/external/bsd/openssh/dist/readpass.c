@@ -1,4 +1,3 @@
-/*	$NetBSD: readpass.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: readpass.c,v 1.50 2014/02/02 03:44:31 djm Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -25,14 +24,15 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: readpass.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
-#include <paths.h>
-#include <readpassphrase.h>
+#ifdef HAVE_PATHS_H
+# include <paths.h>
+#endif
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -48,7 +48,7 @@ __RCSID("$NetBSD: readpass.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
 #include "uidswap.h"
 
 static char *
-ssh_askpass(const char *askpass, const char *msg)
+ssh_askpass(char *askpass, const char *msg)
 {
 	pid_t pid, ret;
 	size_t len;
@@ -118,8 +118,7 @@ ssh_askpass(const char *askpass, const char *msg)
 char *
 read_passphrase(const char *prompt, int flags)
 {
-	const char *askpass = NULL;
-	char *ret, buf[1024];
+	char *askpass = NULL, *ret, buf[1024];
 	int rppflags, use_askpass = 0, ttyfd;
 
 	rppflags = (flags & RP_ECHO) ? RPP_ECHO_ON : RPP_ECHO_OFF;

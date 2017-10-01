@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-ecdsa.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: ssh-ecdsa.c,v 1.11 2014/06/24 01:13:21 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -26,7 +25,9 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-ecdsa.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
+#if defined(WITH_OPENSSL) && defined(OPENSSL_HAS_ECC)
+
 #include <sys/types.h>
 
 #include <openssl/bn.h>
@@ -187,3 +188,5 @@ ssh_ecdsa_verify(const struct sshkey *key,
 	free(ktype);
 	return ret;
 }
+
+#endif /* WITH_OPENSSL && OPENSSL_HAS_ECC */

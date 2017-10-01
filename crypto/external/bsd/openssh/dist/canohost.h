@@ -1,4 +1,3 @@
-/*	$NetBSD: canohost.h,v 1.5 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: canohost.h,v 1.11 2009/05/27 06:31:25 andreas Exp $ */
 
 /*
@@ -26,3 +25,5 @@ int		 get_remote_port(void);
 int		 get_local_port(void);
 int		 get_sock_port(int, int);
 void		 clear_cached_addr(void);
+
+void		 ipv64_normalise_mapped(struct sockaddr_storage *, socklen_t *);

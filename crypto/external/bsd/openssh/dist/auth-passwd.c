@@ -1,4 +1,3 @@
-/*	$NetBSD: auth-passwd.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth-passwd.c,v 1.44 2014/07/15 15:54:14 millert Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -38,15 +37,13 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth-passwd.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
 
-#include <login_cap.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
-#include <unistd.h>
 
 #include "packet.h"
 #include "buffer.h"
@@ -60,16 +57,15 @@ __RCSID("$NetBSD: auth-passwd.c,v 1.4 2015/04/03 23:58:19 christos Exp $");
 
 extern Buffer loginmsg;
 extern ServerOptions options;
-int sys_auth_passwd(Authctxt *, const char *);
 
 #ifdef HAVE_LOGIN_CAP
 extern login_cap_t *lc;
 #endif
 
+
 #define DAY		(24L * 60 * 60) /* 1 day in seconds */
 #define TWO_WEEKS	(2L * 7 * DAY)	/* 2 weeks in seconds */
 
-#if defined(BSD_AUTH) || defined(USE_PAM)
 void
 disable_forwarding(void)
 {
@@ -77,7 +73,6 @@ disable_forwarding(void)
 	no_agent_forwarding_flag = 1;
 	no_x11_forwarding_flag = 1;
 }
-#endif
 
 /*
  * Tries to authenticate the user using password.  Returns true if
@@ -87,16 +82,18 @@ int
 auth_password(Authctxt *authctxt, const char *password)
 {
 	struct passwd * pw = authctxt->pw;
-	int ok = authctxt->valid;
+	int result, ok = authctxt->valid;
+#if defined(USE_SHADOW) && defined(HAS_SHADOW_EXPIRE)
+	static int expire_checked = 0;
+#endif
 
+#ifndef HAVE_CYGWIN
 	if (pw->pw_uid == 0 && options.permit_root_login != PERMIT_YES)
 		ok = 0;
+#endif
 	if (*password == '\0' && options.permit_empty_passwd == 0)
 		return 0;
-#ifdef USE_PAM
-	if (options.use_pam)
-		return (sshpam_auth_passwd(authctxt, password) && ok);
-#endif
+
 #ifdef KRB5
 	if (options.kerberos_authentication == 1) {
 		int ret = auth_krb5_password(authctxt, password);
@@ -105,7 +102,31 @@ auth_password(Authctxt *authctxt, const char *password)
 		/* Fall back to ordinary passwd authentication. */
 	}
 #endif
-	return (sys_auth_passwd(authctxt, password) && ok);
+#ifdef HAVE_CYGWIN
+	{
+		HANDLE hToken = cygwin_logon_user(pw, password);
+
+		if (hToken == INVALID_HANDLE_VALUE)
+			return 0;
+		cygwin_set_impersonation_token(hToken);
+		return ok;
+	}
+#endif
+#ifdef USE_PAM
+	if (options.use_pam)
+		return (sshpam_auth_passwd(authctxt, password) && ok);
+#endif
+#if defined(USE_SHADOW) && defined(HAS_SHADOW_EXPIRE)
+	if (!expire_checked) {
+		expire_checked = 1;
+		if (auth_shadow_pwexpired(authctxt))
+			authctxt->force_pwchange = 1;
+	}
+#endif
+	result = sys_auth_passwd(authctxt, password);
+	if (authctxt->force_pwchange)
+		disable_forwarding();
+	return (result && ok);
 }
 
 #ifdef BSD_AUTH
@@ -167,26 +188,29 @@ sys_auth_passwd(Authctxt *authctxt, const char *password)
 		return (auth_close(as));
 	}
 }
-#else
+#elif !defined(CUSTOM_SYS_AUTH_PASSWD)
 int
 sys_auth_passwd(Authctxt *authctxt, const char *password)
 {
 	struct passwd *pw = authctxt->pw;
 	char *encrypted_password;
 
+	/* Just use the supplied fake password if authctxt is invalid */
+	char *pw_password = authctxt->valid ? shadow_pw(pw) : pw->pw_passwd;
+
 	/* Check for users with no password. */
-	if (strcmp(password, "") == 0 && strcmp(pw->pw_passwd, "") == 0)
+	if (strcmp(pw_password, "") == 0 && strcmp(password, "") == 0)
 		return (1);
 
 	/* Encrypt the candidate password using the proper salt. */
-	encrypted_password = crypt(password,
-	    (pw->pw_passwd[0] && pw->pw_passwd[1]) ?
-	    pw->pw_passwd : "xx");
+	encrypted_password = xcrypt(password,
+	    (pw_password[0] && pw_password[1]) ? pw_password : "xx");
 
 	/*
 	 * Authentication is accepted if the encrypted passwords
 	 * are identical.
 	 */
-	return (strcmp(encrypted_password, pw->pw_passwd) == 0);
+	return encrypted_password != NULL &&
+	    strcmp(encrypted_password, pw_password) == 0;
 }
 #endif

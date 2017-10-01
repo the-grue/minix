@@ -1,4 +1,3 @@
-/*	$NetBSD: scp.c,v 1.12 2015/07/03 01:00:00 christos Exp $	*/
 /* $OpenBSD: scp.c,v 1.182 2015/04/24 01:36:00 deraadt Exp $ */
 /*
  * scp - secure remote copy.  This is basically patched BSD rcp which
@@ -73,19 +72,30 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: scp.c,v 1.12 2015/07/03 01:00:00 christos Exp $");
-#include <sys/param.h>	/* roundup MAX */
+
 #include <sys/types.h>
-#include <sys/poll.h>
+#include <sys/param.h>
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
+#ifdef HAVE_POLL_H
+#include <poll.h>
+#else
+# ifdef HAVE_SYS_POLL_H
+#  include <sys/poll.h>
+# endif
+#endif
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
 #include <sys/wait.h>
-#include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/uio.h>
 
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -94,8 +104,9 @@ __RCSID("$NetBSD: scp.c,v 1.12 2015/07/03 01:00:00 christos Exp $");
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-#include <limits.h>
+#if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
 #include <vis.h>
+#endif
 
 #include "xmalloc.h"
 #include "atomicio.h"
@@ -104,13 +115,12 @@ __RCSID("$NetBSD: scp.c,v 1.12 2015/07/03 01:00:00 christos Exp $");
 #include "misc.h"
 #include "progressmeter.h"
 
+extern char *__progname;
+
 #define COPY_BUFLEN	16384
 
 int do_cmd(char *host, char *remuser, char *cmd, int *fdin, int *fdout);
 int do_cmd2(char *host, char *remuser, char *cmd, int fdin, int fdout);
-
-static char dot[] = ".";
-static char empty[] = "";
 
 /* Struct for addargs */
 arglist args;
@@ -136,16 +146,12 @@ int showprogress = 1;
 int throughlocal = 0;
 
 /* This is the program to execute for the secured connection. ("ssh" or -S) */
-#ifdef RESCUEDIR
-const char *ssh_program = RESCUEDIR "/ssh";
-#else
-const char *ssh_program = _PATH_SSH_PROGRAM;
-#endif
+char *ssh_program = _PATH_SSH_PROGRAM;
 
 /* This is used to store the pid of ssh_program */
 pid_t do_cmd_pid = -1;
 
-__dead static void
+static void
 killchild(int signo)
 {
 	if (do_cmd_pid > 1) {
@@ -339,9 +345,9 @@ typedef struct {
 } BUF;
 
 BUF *allocbuf(BUF *, int, int);
-__dead static void lostconn(int);
+void lostconn(int);
 int okname(char *);
-void run_err(const char *,...) __printflike(1, 2);
+void run_err(const char *,...);
 void verifydir(char *);
 
 struct passwd *pwd;
@@ -356,9 +362,9 @@ int response(void);
 void rsource(char *, struct stat *);
 void sink(int, char *[]);
 void source(int, char *[]);
-static void tolocal(int, char *[]);
-static void toremote(char *, int, char *[]);
-__dead static void usage(void);
+void tolocal(int, char *[]);
+void toremote(char *, int, char *[]);
+void usage(void);
 
 int
 main(int argc, char **argv)
@@ -377,6 +383,8 @@ main(int argc, char **argv)
 	for (n = 0; n < argc; n++)
 		newargv[n] = xstrdup(argv[n]);
 	argv = newargv;
+
+	__progname = ssh_get_progname(argv[0]);
 
 	memset(&args, '\0', sizeof(args));
 	memset(&remote_remote_args, '\0', sizeof(remote_remote_args));
@@ -460,6 +468,9 @@ main(int argc, char **argv)
 		case 't':	/* "to" */
 			iamremote = 1;
 			tflag = 1;
+#ifdef HAVE_CYGWIN
+			setmode(0, O_BINARY);
+#endif
 			break;
 		default:
 			usage();
@@ -571,7 +582,7 @@ toremote(char *targ, int argc, char **argv)
 
 	*targ++ = 0;
 	if (*targ == 0)
-		targ = dot;
+		targ = ".";
 
 	arg = xstrdup(argv[argc - 1]);
 	if ((thost = strrchr(arg, '@'))) {
@@ -595,7 +606,7 @@ toremote(char *targ, int argc, char **argv)
 		if (src && throughlocal) {	/* extended remote to remote */
 			*src++ = 0;
 			if (*src == 0)
-				src = dot;
+				src = ".";
 			host = strrchr(argv[i], '@');
 			if (host) {
 				*host++ = 0;
@@ -635,7 +646,7 @@ toremote(char *targ, int argc, char **argv)
 			}
 			*src++ = 0;
 			if (*src == 0)
-				src = dot;
+				src = ".";
 			host = strrchr(argv[i], '@');
 
 			if (host) {
@@ -678,7 +689,7 @@ toremote(char *targ, int argc, char **argv)
 	free(arg);
 }
 
-static void
+void
 tolocal(int argc, char **argv)
 {
 	char *bp, *host, *src, *suser;
@@ -705,7 +716,7 @@ tolocal(int argc, char **argv)
 		}
 		*src++ = 0;
 		if (*src == 0)
-			src = dot;
+			src = ".";
 		if ((host = strrchr(argv[i], '@')) == NULL) {
 			host = argv[i];
 			suser = NULL;
@@ -739,11 +750,10 @@ source(int argc, char **argv)
 	off_t i, statbytes;
 	size_t amt, nr;
 	int fd = -1, haderr, indx;
-	char *last, *name, buf[16384], encname[PATH_MAX];
+	char *last, *name, buf[2048], encname[PATH_MAX];
 	int len;
 
 	for (indx = 0; indx < argc; ++indx) {
-		fd = -1;
 		name = argv[indx];
 		statbytes = 0;
 		len = strlen(name);
@@ -752,7 +762,7 @@ source(int argc, char **argv)
 		if ((fd = open(name, O_RDONLY|O_NONBLOCK, 0)) < 0)
 			goto syserr;
 		if (strchr(name, '\n') != NULL) {
-			strvisx(encname, name, len, VIS_NL);
+			strnvis(encname, name, sizeof(encname), VIS_NL);
 			name = encname;
 		}
 		if (fstat(fd, &stb) < 0) {
@@ -837,7 +847,7 @@ next:			if (fd != -1) {
 			fd = -1;
 		}
 		if (!haderr)
-			(void) atomicio(vwrite, remout, empty, 1);
+			(void) atomicio(vwrite, remout, "", 1);
 		else
 			run_err("%s: %s", name, strerror(haderr));
 		(void) response();
@@ -889,7 +899,7 @@ rsource(char *name, struct stat *statp)
 		source(1, vect);
 	}
 	(void) closedir(dirp);
-	(void) atomicio(vwrite, remout, __UNCONST("E\n"), 2);
+	(void) atomicio(vwrite, remout, "E\n", 2);
 	(void) response();
 }
 
@@ -909,8 +919,7 @@ sink(int argc, char **argv)
 	off_t size, statbytes;
 	unsigned long long ull;
 	int setimes, targisdir, wrerrno = 0;
-	char ch, *cp, *np, *targ, *vect[1], buf[16384];
-	const char *why;
+	char ch, *cp, *np, *targ, *why, *vect[1], buf[2048];
 	struct timeval tv[2];
 
 #define	atime	tv[0]
@@ -929,7 +938,7 @@ sink(int argc, char **argv)
 	if (targetshouldbedirectory)
 		verifydir(targ);
 
-	(void) atomicio(vwrite, remout, empty, 1);
+	(void) atomicio(vwrite, remout, "", 1);
 	if (stat(targ, &stb) == 0 && S_ISDIR(stb.st_mode))
 		targisdir = 1;
 	for (first = 1;; first = 0) {
@@ -957,7 +966,7 @@ sink(int argc, char **argv)
 			continue;
 		}
 		if (buf[0] == 'E') {
-			(void) atomicio(vwrite, remout, empty, 1);
+			(void) atomicio(vwrite, remout, "", 1);
 			return;
 		}
 		if (ch == '\n')
@@ -993,7 +1002,7 @@ sink(int argc, char **argv)
 			if (!cp || *cp++ != '\0' || atime.tv_usec < 0 ||
 			    atime.tv_usec > 999999)
 				SCREWUP("atime.usec not delimited");
-			(void) atomicio(vwrite, remout, empty, 1);
+			(void) atomicio(vwrite, remout, "", 1);
 			continue;
 		}
 		if (*cp != 'C' && *cp != 'D') {
@@ -1082,7 +1091,7 @@ sink(int argc, char **argv)
 bad:			run_err("%s: %s", np, strerror(errno));
 			continue;
 		}
-		(void) atomicio(vwrite, remout, empty, 1);
+		(void) atomicio(vwrite, remout, "", 1);
 		if ((bp = allocbuf(&buffer, ofd, COPY_BUFLEN)) == NULL) {
 			(void) close(ofd);
 			continue;
@@ -1140,14 +1149,22 @@ bad:			run_err("%s: %s", np, strerror(errno));
 		}
 		if (pflag) {
 			if (exists || omode != mode)
+#ifdef HAVE_FCHMOD
 				if (fchmod(ofd, omode)) {
+#else /* HAVE_FCHMOD */
+				if (chmod(np, omode)) {
+#endif /* HAVE_FCHMOD */
 					run_err("%s: set mode: %s",
 					    np, strerror(errno));
 					wrerr = DISPLAYED;
 				}
 		} else {
 			if (!exists && omode != mode)
+#ifdef HAVE_FCHMOD
 				if (fchmod(ofd, omode & ~mask)) {
+#else /* HAVE_FCHMOD */
+				if (chmod(np, omode & ~mask)) {
+#endif /* HAVE_FCHMOD */
 					run_err("%s: set mode: %s",
 					    np, strerror(errno));
 					wrerr = DISPLAYED;
@@ -1171,7 +1188,7 @@ bad:			run_err("%s: %s", np, strerror(errno));
 			run_err("%s: %s", np, strerror(wrerrno));
 			break;
 		case NO:
-			(void) atomicio(vwrite, remout, empty, 1);
+			(void) atomicio(vwrite, remout, "", 1);
 			break;
 		case DISPLAYED:
 			break;
@@ -1298,6 +1315,7 @@ BUF *
 allocbuf(BUF *bp, int fd, int blksize)
 {
 	size_t size;
+#ifdef HAVE_STRUCT_STAT_ST_BLKSIZE
 	struct stat stb;
 
 	if (fstat(fd, &stb) < 0) {
@@ -1307,6 +1325,9 @@ allocbuf(BUF *bp, int fd, int blksize)
 	size = roundup(stb.st_blksize, blksize);
 	if (size == 0)
 		size = blksize;
+#else /* HAVE_STRUCT_STAT_ST_BLKSIZE */
+	size = blksize;
+#endif /* HAVE_STRUCT_STAT_ST_BLKSIZE */
 	if (bp->cnt >= size)
 		return (bp);
 	if (bp->buf == NULL)
@@ -1318,7 +1339,7 @@ allocbuf(BUF *bp, int fd, int blksize)
 	return (bp);
 }
 
-static void
+void
 lostconn(int signo)
 {
 	if (!iamremote)

@@ -15,6 +15,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "includes.h"
+
+#ifdef SANDBOX_SYSTRACE
+
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
@@ -49,7 +53,13 @@ static const struct sandbox_policy preauth_policy[] = {
 	{ SYS_clock_gettime, SYSTR_POLICY_PERMIT },
 	{ SYS_close, SYSTR_POLICY_PERMIT },
 	{ SYS_exit, SYSTR_POLICY_PERMIT },
+#ifdef SYS_getentropy
+	/* OpenBSD 5.6 and newer use getentropy(2) to seed arc4random(3). */
 	{ SYS_getentropy, SYSTR_POLICY_PERMIT },
+#else
+	/* Previous releases used sysctl(3)'s kern.arnd variable. */
+	{ SYS___sysctl, SYSTR_POLICY_PERMIT },
+#endif
 	{ SYS_getpid, SYSTR_POLICY_PERMIT },
 	{ SYS_getpgid, SYSTR_POLICY_PERMIT },
 	{ SYS_gettimeofday, SYSTR_POLICY_PERMIT },
@@ -65,7 +75,9 @@ static const struct sandbox_policy preauth_policy[] = {
 	{ SYS_poll, SYSTR_POLICY_PERMIT },
 	{ SYS_read, SYSTR_POLICY_PERMIT },
 	{ SYS_select, SYSTR_POLICY_PERMIT },
-	{ SYS_sendsyslog, SYSTR_POLICY_PERMIT },
+#ifdef SYS_sendsyslog
+ 	{ SYS_sendsyslog, SYSTR_POLICY_PERMIT },
+#endif
 	{ SYS_shutdown, SYSTR_POLICY_PERMIT },
 	{ SYS_sigprocmask, SYSTR_POLICY_PERMIT },
 	{ SYS_write, SYSTR_POLICY_PERMIT },
@@ -79,7 +91,7 @@ struct ssh_sandbox {
 };
 
 struct ssh_sandbox *
-ssh_sandbox_init(void)
+ssh_sandbox_init(struct monitor *monitor)
 {
 	struct ssh_sandbox *box;
 
@@ -196,3 +208,5 @@ ssh_sandbox_parent_preauth(struct ssh_sandbox *box, pid_t child_pid)
 {
 	ssh_sandbox_parent(box, child_pid, preauth_policy);
 }
+
+#endif /* SANDBOX_SYSTRACE */

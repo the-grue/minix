@@ -1,4 +1,3 @@
-/*	$NetBSD: md-sha256.c,v 1.3 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: md-sha256.c,v 1.5 2006/08/03 03:34:42 deraadt Exp $ */
 /*
  * Copyright (c) 2005 Damien Miller <djm@openbsd.org>
@@ -17,15 +16,23 @@
  */
 
 /* EVP wrapper for SHA256 */
+
 #include "includes.h"
-__RCSID("$NetBSD: md-sha256.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include <sys/types.h>
+#include <openssl/opensslv.h>
 
-#include <openssl/evp.h>
+#if !defined(HAVE_EVP_SHA256) && (OPENSSL_VERSION_NUMBER >= 0x00907000L)
 
-#include <sys/sha2.h>
 #include <string.h>
+#include <openssl/evp.h>
+#ifdef HAVE_SHA256_UPDATE
+# ifdef HAVE_SHA2_H
+#  include <sha2.h>
+# elif defined(HAVE_CRYPTO_SHA2_H)
+#  include <crypto/sha2.h>
+# endif
+#endif
 
 const EVP_MD *evp_ssh_sha256(void);
 
@@ -37,7 +44,7 @@ ssh_sha256_init(EVP_MD_CTX *ctxt)
 }
 
 static int
-ssh_sha256_update(EVP_MD_CTX *ctxt, const void *data, size_t len)
+ssh_sha256_update(EVP_MD_CTX *ctxt, const void *data, unsigned long len)
 {
 	SHA256_Update(ctxt->md_data, data, len);
 	return (1);
@@ -74,3 +81,6 @@ evp_ssh_sha256(void)
 
 	return (&ssh_sha256);
 }
+
+#endif /* !defined(HAVE_EVP_SHA256) && (OPENSSL_VERSION_NUMBER >= 0x00907000L) */
+

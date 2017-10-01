@@ -1,4 +1,3 @@
-/*	$NetBSD: auth-rh-rsa.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: auth-rh-rsa.c,v 1.44 2014/07/15 15:54:14 millert Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -15,7 +14,9 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth-rh-rsa.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
+#ifdef WITH_SSH1
+
 #include <sys/types.h>
 
 #include <pwd.h>
@@ -77,7 +78,7 @@ auth_rhosts_rsa(Authctxt *authctxt, char *cuser, Key *client_host_key)
 	    client_host_key->rsa == NULL)
 		return 0;
 
-	chost = __UNCONST(get_canonical_hostname(options.use_dns));
+	chost = (char *)get_canonical_hostname(options.use_dns);
 	debug("Rhosts RSA authentication: canonical host %.900s", chost);
 
 	if (!PRIVSEP(auth_rhosts_rsa_key_allowed(pw, cuser, chost, client_host_key))) {
@@ -103,3 +104,5 @@ auth_rhosts_rsa(Authctxt *authctxt, char *cuser, Key *client_host_key)
 	packet_send_debug("Rhosts with RSA host authentication accepted.");
 	return 1;
 }
+
+#endif /* WITH_SSH1 */

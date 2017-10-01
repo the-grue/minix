@@ -1,4 +1,3 @@
-/*	$NetBSD: packet.c,v 1.21 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: packet.c,v 1.214 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -39,14 +38,18 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: packet.c,v 1.21 2015/08/21 08:20:59 christos Exp $");
+ 
 #include <sys/param.h>	/* MIN roundup */
 #include <sys/types.h>
-#include <sys/queue.h>
+#include "openbsd-compat/sys-queue.h"
 #include <sys/socket.h>
-#include <sys/time.h>
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
+
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <arpa/inet.h>
 
 #include <errno.h>
 #include <stdarg.h>
@@ -408,6 +411,11 @@ ssh_packet_connection_af(struct ssh *ssh)
 	if (getsockname(ssh->state->connection_out, (struct sockaddr *)&to,
 	    &tolen) < 0)
 		return 0;
+#ifdef IPV4_IN_IPV6
+	if (to.ss_family == AF_INET6 &&
+	    IN6_IS_ADDR_V4MAPPED(&((struct sockaddr_in6 *)&to)->sin6_addr))
+		return AF_INET;
+#endif
 	return to.ss_family;
 }
 
@@ -1140,7 +1148,6 @@ ssh_packet_send2_wrapped(struct ssh *ssh)
 	    len, padlen, aadlen));
 
 	/* compute MAC over seqnr and packet(length fields, payload, padding) */
-debug("mac %p, %d %d", mac, mac? mac->enabled : -1, mac ? mac->etm : -1);
 	if (mac && mac->enabled && !mac->etm) {
 		if ((r = mac_compute(mac, state->p_send.seqnr,
 		    sshbuf_ptr(state->outgoing_packet), len,
@@ -1190,10 +1197,7 @@ debug("mac %p, %d %d", mac, mac? mac->enabled : -1, mac ? mac->etm : -1);
 	else
 		r = 0;
  out:
-	if (r < 0)
-		return r;
-	else
-		return len - 4;
+	return r;
 }
 
 int
@@ -1203,7 +1207,6 @@ ssh_packet_send2(struct ssh *ssh)
 	struct packet *p;
 	u_char type;
 	int r;
-	int packet_length;
 
 	type = sshbuf_ptr(state->outgoing_packet)[5];
 
@@ -1223,7 +1226,7 @@ ssh_packet_send2(struct ssh *ssh)
 			state->outgoing_packet = sshbuf_new();
 			if (state->outgoing_packet == NULL)
 				return SSH_ERR_ALLOC_FAIL;
-			return sshbuf_len(state->outgoing_packet);
+			return 0;
 		}
 	}
 
@@ -1231,10 +1234,8 @@ ssh_packet_send2(struct ssh *ssh)
 	if (type == SSH2_MSG_KEXINIT)
 		state->rekeying = 1;
 
-	if ((r = ssh_packet_send2_wrapped(ssh)) < 0)
+	if ((r = ssh_packet_send2_wrapped(ssh)) != 0)
 		return r;
-
-	packet_length = r;
 
 	/* after a NEWKEYS message we can send the complete queue */
 	if (type == SSH2_MSG_NEWKEYS) {
@@ -1247,12 +1248,11 @@ ssh_packet_send2(struct ssh *ssh)
 			state->outgoing_packet = p->payload;
 			TAILQ_REMOVE(&state->outgoing, p, next);
 			free(p);
-			if ((r = ssh_packet_send2_wrapped(ssh)) < 0)
+			if ((r = ssh_packet_send2_wrapped(ssh)) != 0)
 				return r;
-			packet_length += r;
 		}
 	}
-	return packet_length;
+	return 0;
 }
 
 /*
@@ -1265,7 +1265,7 @@ int
 ssh_packet_read_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 {
 	struct session_state *state = ssh->state;
-	int len, r, ms_remain = 0, cont;
+	int len, r, ms_remain, cont;
 	fd_set *setp;
 	char buf[8192];
 	struct timeval timeout, start, *timeoutp = NULL;
@@ -1281,7 +1281,7 @@ ssh_packet_read_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 	 * Since we are blocking, ensure that all written packets have
 	 * been sent.
 	 */
-	if ((r = ssh_packet_write_wait(ssh)) < 0)
+	if ((r = ssh_packet_write_wait(ssh)) != 0)
 		goto out;
 
 	/* Stay in the loop until we have received a complete packet. */
@@ -1321,7 +1321,8 @@ ssh_packet_read_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 			if ((r = select(state->connection_in + 1, setp,
 			    NULL, NULL, timeoutp)) >= 0)
 				break;
-			if (errno != EAGAIN && errno != EINTR)
+			if (errno != EAGAIN && errno != EINTR &&
+			    errno != EWOULDBLOCK)
 				break;
 			if (state->packet_timeout_ms == -1)
 				continue;
@@ -1460,7 +1461,7 @@ ssh_packet_read_poll1(struct ssh *ssh, u_char *typep)
 		if (emsg != NULL) {
 			error("%s", emsg);
 			if ((r = sshpkt_disconnect(ssh, "%s", emsg)) != 0 ||
-			    (r = ssh_packet_write_wait(ssh)) < 0)
+			    (r = ssh_packet_write_wait(ssh)) != 0)
 					return r;
 			return SSH_ERR_CONN_CORRUPT;
 		}
@@ -1495,7 +1496,7 @@ ssh_packet_read_poll1(struct ssh *ssh, u_char *typep)
 		error("%s: len %d != sshbuf_len %zd", __func__,
 		    len, sshbuf_len(state->incoming_packet));
 		if ((r = sshpkt_disconnect(ssh, "invalid packet length")) != 0 ||
-		    (r = ssh_packet_write_wait(ssh)) < 0)
+		    (r = ssh_packet_write_wait(ssh)) != 0)
 			return r;
 		return SSH_ERR_CONN_CORRUPT;
 	}
@@ -1505,7 +1506,7 @@ ssh_packet_read_poll1(struct ssh *ssh, u_char *typep)
 	if (checksum != stored_checksum) {
 		error("Corrupted check bytes on input");
 		if ((r = sshpkt_disconnect(ssh, "connection corrupted")) != 0 ||
-		    (r = ssh_packet_write_wait(ssh)) < 0)
+		    (r = ssh_packet_write_wait(ssh)) != 0)
 			return r;
 		return SSH_ERR_CONN_CORRUPT;
 	}
@@ -1529,7 +1530,7 @@ ssh_packet_read_poll1(struct ssh *ssh, u_char *typep)
 	if (*typep < SSH_MSG_MIN || *typep > SSH_MSG_MAX) {
 		error("Invalid ssh1 packet type: %d", *typep);
 		if ((r = sshpkt_disconnect(ssh, "invalid packet type")) != 0 ||
-		    (r = ssh_packet_write_wait(ssh)) < 0)
+		    (r = ssh_packet_write_wait(ssh)) != 0)
 			return r;
 		return SSH_ERR_PROTOCOL_ERROR;
 	}
@@ -1702,7 +1703,7 @@ ssh_packet_read_poll2(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 	if (padlen < 4)	{
 		if ((r = sshpkt_disconnect(ssh,
 		    "Corrupted padlen %d on input.", padlen)) != 0 ||
-		    (r = ssh_packet_write_wait(ssh)) < 0)
+		    (r = ssh_packet_write_wait(ssh)) != 0)
 			return r;
 		return SSH_ERR_CONN_CORRUPT;
 	}
@@ -1735,7 +1736,7 @@ ssh_packet_read_poll2(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 	if (*typep < SSH2_MSG_MIN || *typep >= SSH2_MSG_LOCAL_MIN) {
 		if ((r = sshpkt_disconnect(ssh,
 		    "Invalid ssh2 packet type: %d", *typep)) != 0 ||
-		    (r = ssh_packet_write_wait(ssh)) < 0)
+		    (r = ssh_packet_write_wait(ssh)) != 0)
 			return r;
 		return SSH_ERR_PROTOCOL_ERROR;
 	}
@@ -1904,7 +1905,7 @@ ssh_packet_send_debug(struct ssh *ssh, const char *fmt,...)
 		    (r = sshpkt_send(ssh)) != 0)
 			fatal("%s: %s", __func__, ssh_err(r));
 	}
-	if ((r = ssh_packet_write_wait(ssh)) < 0)
+	if ((r = ssh_packet_write_wait(ssh)) != 0)
 		fatal("%s: %s", __func__, ssh_err(r));
 }
 
@@ -1986,7 +1987,7 @@ ssh_packet_disconnect(struct ssh *ssh, const char *fmt,...)
 	if ((r = sshpkt_disconnect(ssh, "%s", buf)) != 0)
 		sshpkt_fatal(ssh, __func__, r);
 
-	if ((r = ssh_packet_write_wait(ssh)) < 0)
+	if ((r = ssh_packet_write_wait(ssh)) != 0)
 		sshpkt_fatal(ssh, __func__, r);
 
 	/* Close the connection. */
@@ -2010,16 +2011,17 @@ ssh_packet_write_poll(struct ssh *ssh)
 		len = roaming_write(state->connection_out,
 		    sshbuf_ptr(state->output), len, &cont);
 		if (len == -1) {
-			if (errno == EINTR || errno == EAGAIN)
+			if (errno == EINTR || errno == EAGAIN ||
+			    errno == EWOULDBLOCK)
 				return 0;
 			return SSH_ERR_SYSTEM_ERROR;
 		}
 		if (len == 0 && !cont)
 			return SSH_ERR_CONN_CLOSED;
-		if ((r = sshbuf_consume(state->output, len)) < 0)
+		if ((r = sshbuf_consume(state->output, len)) != 0)
 			return r;
 	}
-	return len;
+	return 0;
 }
 
 /*
@@ -2032,14 +2034,13 @@ ssh_packet_write_wait(struct ssh *ssh)
 	fd_set *setp;
 	int ret, r, ms_remain = 0;
 	struct timeval start, timeout, *timeoutp = NULL;
-	u_int bytes_sent = 0;
 	struct session_state *state = ssh->state;
 
 	setp = calloc(howmany(state->connection_out + 1,
 	    NFDBITS), sizeof(fd_mask));
 	if (setp == NULL)
 		return SSH_ERR_ALLOC_FAIL;
-	bytes_sent += ssh_packet_write_poll(ssh);
+	ssh_packet_write_poll(ssh);
 	while (ssh_packet_have_data_to_write(ssh)) {
 		memset(setp, 0, howmany(state->connection_out + 1,
 		    NFDBITS) * sizeof(fd_mask));
@@ -2057,7 +2058,8 @@ ssh_packet_write_wait(struct ssh *ssh)
 			if ((ret = select(state->connection_out + 1,
 			    NULL, setp, NULL, timeoutp)) >= 0)
 				break;
-			if (errno != EAGAIN && errno != EINTR)
+			if (errno != EAGAIN && errno != EINTR &&
+			    errno != EWOULDBLOCK)
 				break;
 			if (state->packet_timeout_ms == -1)
 				continue;
@@ -2071,14 +2073,13 @@ ssh_packet_write_wait(struct ssh *ssh)
 			free(setp);
 			return SSH_ERR_CONN_TIMEOUT;
 		}
-		if ((r = ssh_packet_write_poll(ssh)) < 0) {
+		if ((r = ssh_packet_write_poll(ssh)) != 0) {
 			free(setp);
 			return r;
 		}
-		bytes_sent += r;
 	}
 	free(setp);
-	return bytes_sent;
+	return 0;
 }
 
 /* Returns true if there is buffered data to write to the connection. */
@@ -2103,9 +2104,11 @@ ssh_packet_not_very_much_data_to_write(struct ssh *ssh)
 void
 ssh_packet_set_tos(struct ssh *ssh, int tos)
 {
+#ifndef IP_TOS_IS_BROKEN
 	if (!ssh_packet_connection_is_on_socket(ssh))
 		return;
 	switch (ssh_packet_connection_af(ssh)) {
+# ifdef IP_TOS
 	case AF_INET:
 		debug3("%s: set IP_TOS 0x%02x", __func__, tos);
 		if (setsockopt(ssh->state->connection_in,
@@ -2113,6 +2116,8 @@ ssh_packet_set_tos(struct ssh *ssh, int tos)
 			error("setsockopt IP_TOS %d: %.100s:",
 			    tos, strerror(errno));
 		break;
+# endif /* IP_TOS */
+# ifdef IPV6_TCLASS
 	case AF_INET6:
 		debug3("%s: set IPV6_TCLASS 0x%02x", __func__, tos);
 		if (setsockopt(ssh->state->connection_in,
@@ -2120,7 +2125,9 @@ ssh_packet_set_tos(struct ssh *ssh, int tos)
 			error("setsockopt IPV6_TCLASS %d: %.100s:",
 			    tos, strerror(errno));
 		break;
+# endif /* IPV6_TCLASS */
 	}
+#endif /* IP_TOS_IS_BROKEN */
 }
 
 /* Informs that the current session is interactive.  Sets IP flags for that. */
@@ -2221,13 +2228,6 @@ ssh_packet_send_ignore(struct ssh *ssh, int nbytes)
 	}
 }
 
-int rekey_requested = 0;
-void
-ssh_packet_request_rekeying(void)
-{
-	rekey_requested = 1;
-}
-
 #define MAX_PACKETS	(1U<<31)
 int
 ssh_packet_need_rekeying(struct ssh *ssh)
@@ -2236,11 +2236,6 @@ ssh_packet_need_rekeying(struct ssh *ssh)
 
 	if (ssh->compat & SSH_BUG_NOREKEY)
 		return 0;
-	if (rekey_requested == 1)
-	{
-		rekey_requested = 0;
-		return 1;
-	}
 	return
 	    (state->p_send.packets > MAX_PACKETS) ||
 	    (state->p_read.packets > MAX_PACKETS) ||
@@ -2762,11 +2757,13 @@ sshpkt_put_stringb(struct ssh *ssh, const struct sshbuf *v)
 }
 
 #ifdef WITH_OPENSSL
+#ifdef OPENSSL_HAS_ECC
 int
 sshpkt_put_ec(struct ssh *ssh, const EC_POINT *v, const EC_GROUP *g)
 {
 	return sshbuf_put_ec(ssh->state->outgoing_packet, v, g);
 }
+#endif /* OPENSSL_HAS_ECC */
 
 #ifdef WITH_SSH1
 int
@@ -2828,11 +2825,13 @@ sshpkt_get_cstring(struct ssh *ssh, char **valp, size_t *lenp)
 }
 
 #ifdef WITH_OPENSSL
+#ifdef OPENSSL_HAS_ECC
 int
 sshpkt_get_ec(struct ssh *ssh, EC_POINT *v, const EC_GROUP *g)
 {
 	return sshbuf_get_ec(ssh->state->incoming_packet, v, g);
 }
+#endif /* OPENSSL_HAS_ECC */
 
 #ifdef WITH_SSH1
 int
@@ -2884,19 +2883,12 @@ sshpkt_start(struct ssh *ssh, u_char type)
 /* send it */
 
 int
-sshpkt_sendx(struct ssh *ssh)
+sshpkt_send(struct ssh *ssh)
 {
 	if (compat20)
 		return ssh_packet_send2(ssh);
 	else
 		return ssh_packet_send1(ssh);
-}
-
-int
-sshpkt_send(struct ssh *ssh)
-{
-	int r = sshpkt_sendx(ssh);
-	return r < 0 ? r : 0;
 }
 
 int
@@ -2932,10 +2924,4 @@ sshpkt_add_padding(struct ssh *ssh, u_char pad)
 {
 	ssh->state->extra_pad = pad;
 	return 0;
-}
-
-int
-ssh_packet_authentication_state(void)
-{
-	return active_state->state->after_authentication;
 }

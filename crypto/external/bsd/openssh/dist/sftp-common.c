@@ -1,4 +1,3 @@
-/*	$NetBSD: sftp-common.c,v 1.7 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: sftp-common.c,v 1.28 2015/01/20 23:14:00 deraadt Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -26,7 +25,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: sftp-common.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/param.h>	/* MAX */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -34,12 +33,13 @@ __RCSID("$NetBSD: sftp-common.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
 #include <grp.h>
 #include <pwd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <stdarg.h>
-#include <unistd.h>
-#include <stdlib.h>
+#ifdef HAVE_UTIL_H
 #include <util.h>
+#endif
 
 #include "xmalloc.h"
 #include "ssherr.h"
@@ -48,7 +48,6 @@ __RCSID("$NetBSD: sftp-common.c,v 1.7 2015/04/03 23:58:19 christos Exp $");
 
 #include "sftp.h"
 #include "sftp-common.h"
-#include "fmt_scaled.h"
 
 /* Clear contents of attributes structure */
 void
@@ -216,7 +215,7 @@ ls_file(const char *name, const struct stat *st, int remote, int si_units)
 {
 	int ulen, glen, sz = 0;
 	struct tm *ltime = localtime(&st->st_mtime);
-	const char *user, *group;
+	char *user, *group;
 	char buf[1024], mode[11+1], tbuf[12+1], ubuf[11+1], gbuf[11+1];
 	char sbuf[FMT_SCALED_STRSIZE];
 	time_t now;

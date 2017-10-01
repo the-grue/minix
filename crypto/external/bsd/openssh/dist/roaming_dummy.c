@@ -1,4 +1,3 @@
-/*	$NetBSD: roaming_dummy.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: roaming_dummy.c,v 1.4 2015/01/19 19:52:16 markus Exp $ */
 /*
  * Copyright (c) 2004-2009 AppGate Network Security AB
@@ -20,6 +19,8 @@
  * This file is included in the client programs which should not
  * support roaming.
  */
+
+#include "includes.h"
 
 #include <sys/types.h>
 #include <unistd.h>

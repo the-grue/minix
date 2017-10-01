@@ -1,4 +1,3 @@
-/*	$NetBSD: auth-options.c,v 1.11 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: auth-options.c,v 1.68 2015/07/03 03:43:18 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -12,16 +11,16 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth-options.c,v 1.11 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
-#include <sys/queue.h>
 
 #include <netdb.h>
 #include <pwd.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <time.h>
+
+#include "openbsd-compat/sys-queue.h"
 
 #include "key.h"	/* XXX for typedef */
 #include "buffer.h"	/* XXX for typedef */
@@ -93,8 +92,7 @@ auth_clear_options(void)
  * side effect: sets key option flags
  */
 int
-auth_parse_options(struct passwd *pw, const char *opts, const char *file,
-    u_long linenum)
+auth_parse_options(struct passwd *pw, char *opts, char *file, u_long linenum)
 {
 	const char *cp;
 	int i;

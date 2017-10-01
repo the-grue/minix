@@ -1,4 +1,3 @@
-/*	$NetBSD: authfile.c,v 1.12 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: authfile.c,v 1.116 2015/07/09 09:49:46 markus Exp $ */
 /*
  * Copyright (c) 2000, 2013 Markus Friedl.  All rights reserved.
@@ -25,7 +24,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: authfile.c,v 1.12 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -33,6 +32,7 @@ __RCSID("$NetBSD: authfile.c,v 1.12 2015/08/13 10:33:21 christos Exp $");
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -60,7 +60,7 @@ sshkey_save_private_blob(struct sshbuf *keybuf, const char *filename)
 
 	if ((fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0600)) < 0)
 		return SSH_ERR_SYSTEM_ERROR;
-	if (atomicio(vwrite, fd, __UNCONST(sshbuf_ptr(keybuf)),
+	if (atomicio(vwrite, fd, (u_char *)sshbuf_ptr(keybuf),
 	    sshbuf_len(keybuf)) != sshbuf_len(keybuf)) {
 		oerrno = errno;
 		close(fd);
@@ -177,6 +177,9 @@ sshkey_perm_ok(int fd, const char *filename)
 	 * permissions of the file. if the key owned by a different user,
 	 * then we don't care.
 	 */
+#ifdef HAVE_CYGWIN
+	if (check_ntsec(filename))
+#endif
 	if ((st.st_uid == getuid()) && (st.st_mode & 077) != 0) {
 		error("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
 		error("@         WARNING: UNPROTECTED PRIVATE KEY FILE!          @");

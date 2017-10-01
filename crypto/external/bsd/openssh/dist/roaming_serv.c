@@ -1,4 +1,3 @@
-/*	$NetBSD: roaming_serv.c,v 1.4 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: roaming_serv.c,v 1.1 2009/10/24 11:18:23 andreas Exp $ */
 /*
  * Copyright (c) 2004-2009 AppGate Network Security AB
@@ -15,6 +14,8 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
+#include "includes.h"
 
 #include <sys/types.h>
 

@@ -1,4 +1,3 @@
-/*	$NetBSD: sshd.c,v 1.22 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: sshd.c,v 1.458 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -44,23 +43,30 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: sshd.c,v 1.22 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/types.h>
-#include <sys/param.h>
 #include <sys/ioctl.h>
-#include <sys/wait.h>
-#include <sys/tree.h>
-#include <sys/stat.h>
 #include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/queue.h>
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
+#ifdef HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
+#include "openbsd-compat/sys-tree.h"
+#include "openbsd-compat/sys-queue.h"
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#ifdef HAVE_PATHS_H
 #include <paths.h>
+#endif
+#include <grp.h>
 #include <pwd.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,7 +74,15 @@ __RCSID("$NetBSD: sshd.c,v 1.22 2015/08/21 08:20:59 christos Exp $");
 #include <limits.h>
 
 #ifdef WITH_OPENSSL
+#include <openssl/dh.h>
 #include <openssl/bn.h>
+#include <openssl/rand.h>
+#include "openbsd-compat/openssl-compat.h"
+#endif
+
+#ifdef HAVE_SECUREWARE
+#include <sys/security.h>
+#include <prot.h>
 #endif
 
 #include "xmalloc.h"
@@ -97,7 +111,6 @@ __RCSID("$NetBSD: sshd.c,v 1.22 2015/08/21 08:20:59 christos Exp $");
 #include "hostfile.h"
 #include "auth.h"
 #include "authfd.h"
-#include "misc.h"
 #include "msg.h"
 #include "dispatch.h"
 #include "channels.h"
@@ -113,25 +126,8 @@ __RCSID("$NetBSD: sshd.c,v 1.22 2015/08/21 08:20:59 christos Exp $");
 #include "version.h"
 #include "ssherr.h"
 
-#include "pfilter.h"
-
-#ifdef LIBWRAP
-#include <tcpd.h>
-#include <syslog.h>
-int allow_severity = LOG_INFO;
-int deny_severity = LOG_WARNING;
-#endif /* LIBWRAP */
-
-#ifdef WITH_LDAP_PUBKEY
-#include "ldapauth.h"
-#endif
-
 #ifndef O_NOCTTY
 #define O_NOCTTY	0
-#endif
-
-#ifndef HOST_NAME_MAX
-#define HOST_NAME_MAX MAXHOSTNAMELEN
 #endif
 
 /* Re-exec fds */
@@ -146,7 +142,7 @@ extern char *__progname;
 ServerOptions options;
 
 /* Name of the server configuration file. */
-const char *config_file_name = _PATH_SERVER_CONFIG_FILE;
+char *config_file_name = _PATH_SERVER_CONFIG_FILE;
 
 /*
  * Debug mode flag.  This can be set on the command line.  If debug
@@ -170,6 +166,7 @@ int log_stderr = 0;
 
 /* Saved arguments to main(). */
 char **saved_argv;
+int saved_argc;
 
 /* re-exec */
 int rexeced_flag = 0;
@@ -253,6 +250,9 @@ Buffer cfg;
 /* message to be displayed after login */
 Buffer loginmsg;
 
+/* Unprivileged user */
+struct passwd *privsep_pw = NULL;
+
 /* Prototypes for various functions defined later in this file. */
 void destroy_sensitive_data(void);
 void demote_sensitive_data(void);
@@ -307,10 +307,11 @@ sighup_handler(int sig)
  * Called from the main program after receiving SIGHUP.
  * Restarts the server.
  */
-__dead static void
+static void
 sighup_restart(void)
 {
 	logit("Received SIGHUP; restarting.");
+	platform_pre_restart();
 	close_listen_socks();
 	close_startup_pipes();
 	alarm(0);  /* alarm timer persists across exec */
@@ -355,7 +356,7 @@ main_sigchld_handler(int sig)
  * Signal handler for the alarm after the login grace period has expired.
  */
 /*ARGSUSED*/
-__dead static void
+static void
 grace_alarm_handler(int sig)
 {
 	if (use_privsep && pmonitor != NULL && pmonitor->m_pid > 0)
@@ -367,10 +368,9 @@ grace_alarm_handler(int sig)
 	 */
 	if (getpgid(0) == getpid()) {
 		signal(SIGTERM, SIG_IGN);
-		killpg(0, SIGTERM);
+		kill(0, SIGTERM);
 	}
 
-	pfilter_notify(1);
 	/* Log error and exit. */
 	sigdie("Timeout before authentication for %s", get_remote_ipaddr());
 }
@@ -414,8 +414,7 @@ sshd_exchange_identification(int sock_in, int sock_out)
 	int mismatch;
 	int remote_major, remote_minor;
 	int major, minor;
-	char *s;
-	const char *newline = "\n";
+	char *s, *newline = "\n";
 	char buf[256];			/* Must not be larger than remote_version. */
 	char remote_version[256];	/* Must be at least as big as buf. */
 
@@ -433,7 +432,7 @@ sshd_exchange_identification(int sock_in, int sock_out)
 	}
 
 	xasprintf(&server_version_string, "SSH-%d.%d-%.100s%s%s%s",
-	    major, minor, SSH_RELEASE,
+	    major, minor, SSH_VERSION,
 	    *options.version_addendum == '\0' ? "" : " ",
 	    options.version_addendum, newline);
 
@@ -475,7 +474,7 @@ sshd_exchange_identification(int sock_in, int sock_out)
 	 */
 	if (sscanf(client_version_string, "SSH-%d.%d-%[^\n]\n",
 	    &remote_major, &remote_minor, remote_version) != 3) {
-		s = __UNCONST("Protocol mismatch.\n");
+		s = "Protocol mismatch.\n";
 		(void) atomicio(vwrite, sock_out, s, strlen(s));
 		logit("Bad protocol version identification '%.100s' "
 		    "from %s port %d", client_version_string,
@@ -485,9 +484,6 @@ sshd_exchange_identification(int sock_in, int sock_out)
 		cleanup_exit(255);
 	}
 	debug("Client protocol version %d.%d; client software version %.100s",
-	    remote_major, remote_minor, remote_version);
-	logit("SSH: Server;Ltype: Version;Remote: %s-%d;Protocol: %d.%d;Client: %.100s",
-	      get_remote_ipaddr(), get_remote_port(),
 	    remote_major, remote_minor, remote_version);
 
 	active_state->compat = compat_datafellows(remote_version);
@@ -547,7 +543,7 @@ sshd_exchange_identification(int sock_in, int sock_out)
 	debug("Local version string %.200s", server_version_string);
 
 	if (mismatch) {
-		s = __UNCONST("Protocol major versions differ.\n");
+		s = "Protocol major versions differ.\n";
 		(void) atomicio(vwrite, sock_out, s, strlen(s));
 		close(sock_in);
 		close(sock_out);
@@ -612,8 +608,8 @@ demote_sensitive_data(void)
 static void
 privsep_preauth_child(void)
 {
+	u_int32_t rnd[256];
 	gid_t gidset[1];
-	struct passwd *pw;
 
 	/* Enable challenge-response authentication for privilege separation */
 	privsep_challenge_enable();
@@ -624,16 +620,15 @@ privsep_preauth_child(void)
 		ssh_gssapi_prepare_supported_oids();
 #endif
 
+	arc4random_stir();
+	arc4random_buf(rnd, sizeof(rnd));
+#ifdef WITH_OPENSSL
+	RAND_seed(rnd, sizeof(rnd));
+#endif
+	explicit_bzero(rnd, sizeof(rnd));
+
 	/* Demote the private keys to public keys. */
 	demote_sensitive_data();
-
-	if ((pw = getpwnam(SSH_PRIVSEP_USER)) == NULL)
-		fatal("Privilege separation user %s does not exist",
-		    SSH_PRIVSEP_USER);
-	explicit_bzero(pw->pw_passwd, strlen(pw->pw_passwd));
-	endpwent();
-
-	pfilter_init();
 
 	/* Change our root directory */
 	if (chroot(_PATH_PRIVSEP_CHROOT_DIR) == -1)
@@ -643,16 +638,16 @@ privsep_preauth_child(void)
 		fatal("chdir(\"/\"): %s", strerror(errno));
 
 	/* Drop our privileges */
-	debug3("privsep user:group %u:%u", (u_int)pw->pw_uid,
-	    (u_int)pw->pw_gid);
+	debug3("privsep user:group %u:%u", (u_int)privsep_pw->pw_uid,
+	    (u_int)privsep_pw->pw_gid);
 #if 0
 	/* XXX not ready, too heavy after chroot */
-	do_setusercontext(pw);
+	do_setusercontext(privsep_pw);
 #else
-	gidset[0] = pw->pw_gid;
+	gidset[0] = privsep_pw->pw_gid;
 	if (setgroups(1, gidset) < 0)
 		fatal("setgroups: %.100s", strerror(errno));
-	permanently_set_uid(pw);
+	permanently_set_uid(privsep_pw);
 #endif
 }
 
@@ -669,7 +664,7 @@ privsep_preauth(Authctxt *authctxt)
 	pmonitor->m_pkex = &active_state->kex;
 
 	if (use_privsep == PRIVSEP_ON)
-		box = ssh_sandbox_init();
+		box = ssh_sandbox_init(pmonitor);
 	pid = fork();
 	if (pid == -1) {
 		fatal("fork of unprivileged child failed");
@@ -733,7 +728,13 @@ privsep_preauth(Authctxt *authctxt)
 static void
 privsep_postauth(Authctxt *authctxt)
 {
+	u_int32_t rnd[256];
+
+#ifdef DISABLE_FD_PASSING
+	if (1) {
+#else
 	if (authctxt->pw->pw_uid == 0 || options.use_login) {
+#endif
 		/* File descriptor passing is broken or root login */
 		use_privsep = 0;
 		goto skip;
@@ -761,6 +762,13 @@ privsep_postauth(Authctxt *authctxt)
 
 	/* Demote the private keys to public keys. */
 	demote_sensitive_data();
+
+	arc4random_stir();
+	arc4random_buf(rnd, sizeof(rnd));
+#ifdef WITH_OPENSSL
+	RAND_seed(rnd, sizeof(rnd));
+#endif
+	explicit_bzero(rnd, sizeof(rnd));
 
 	/* Drop privileges */
 	do_setusercontext(authctxt->pw);
@@ -827,7 +835,7 @@ list_hostkey_types(void)
 		}
 	}
 	buffer_append(&b, "\0", 1);
-	ret = xstrdup((const char *)buffer_ptr(&b));
+	ret = xstrdup(buffer_ptr(&b));
 	buffer_free(&b);
 	debug("list_hostkey_types: %s", ret);
 	return ret;
@@ -987,11 +995,11 @@ drop_connection(int startups)
 	return (r < p) ? 1 : 0;
 }
 
-__dead static void
+static void
 usage(void)
 {
 	fprintf(stderr, "%s, %s\n",
-	    SSH_VERSION,
+	    SSH_RELEASE,
 #ifdef WITH_OPENSSL
 	    SSLeay_version(SSLEAY_VERSION)
 #else
@@ -1025,9 +1033,10 @@ send_rexec_state(int fd, Buffer *conf)
 	 *	bignum	iqmp			"
 	 *	bignum	p			"
 	 *	bignum	q			"
+	 *	string rngseed		(only if OpenSSL is not self-seeded)
 	 */
 	buffer_init(&m);
-	buffer_put_cstring(&m, (const char *)buffer_ptr(conf));
+	buffer_put_cstring(&m, buffer_ptr(conf));
 
 #ifdef WITH_SSH1
 	if (sensitive_data.server_key != NULL &&
@@ -1042,6 +1051,10 @@ send_rexec_state(int fd, Buffer *conf)
 	} else
 #endif
 		buffer_put_int(&m, 0);
+
+#if defined(WITH_OPENSSL) && !defined(OPENSSL_PRNG_ONLY)
+	rexec_send_rng_seed(&m);
+#endif
 
 	if (ssh_msg_send(fd, 0, &m) == -1)
 		fatal("%s: ssh_msg_send failed", __func__);
@@ -1089,6 +1102,11 @@ recv_rexec_state(int fd, Buffer *conf)
 			    "error", __func__);
 #endif
 	}
+
+#if defined(WITH_OPENSSL) && !defined(OPENSSL_PRNG_ONLY)
+	rexec_recv_rng_seed(&m);
+#endif
+
 	buffer_free(&m);
 
 	debug3("%s: done", __func__);
@@ -1137,8 +1155,6 @@ server_listen(void)
 	int ret, listen_sock, on = 1;
 	struct addrinfo *ai;
 	char ntop[NI_MAXHOST], strport[NI_MAXSERV];
-	int socksize;
-	socklen_t socksizelen = sizeof(int);
 
 	for (ai = options.listen_addrs; ai; ai = ai->ai_next) {
 		if (ai->ai_family != AF_INET && ai->ai_family != AF_INET6)
@@ -1173,12 +1189,11 @@ server_listen(void)
 		    &on, sizeof(on)) == -1)
 			error("setsockopt SO_REUSEADDR: %s", strerror(errno));
 
-		debug("Bind to port %s on %s.", strport, ntop);
+		/* Only communicate in IPv6 over AF_INET6 sockets. */
+		if (ai->ai_family == AF_INET6)
+			sock_set_v6only(listen_sock);
 
-		getsockopt(listen_sock, SOL_SOCKET, SO_RCVBUF, 
-				   &socksize, &socksizelen);
-		debug("Server TCP RWIN socket size: %d", socksize);
-		debug("HPN Buffer Size: %d", options.hpn_buffer_size);
+		debug("Bind to port %s on %s.", strport, ntop);
 
 		/* Bind the socket to the desired port. */
 		if (bind(listen_sock, ai->ai_addr, ai->ai_addrlen) < 0) {
@@ -1216,6 +1231,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 	struct sockaddr_storage from;
 	socklen_t fromlen;
 	pid_t pid;
+	u_char rnd[256];
 
 	/* setup fd set for accept */
 	fdset = NULL;
@@ -1228,7 +1244,6 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 	for (i = 0; i < options.max_startups; i++)
 		startup_pipes[i] = -1;
 
-	pfilter_init();
 	/*
 	 * Stay listening for connections until the system crashes or
 	 * the daemon is killed with a signal.
@@ -1288,7 +1303,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			    (struct sockaddr *)&from, &fromlen);
 			if (*newsock < 0) {
 				if (errno != EINTR && errno != EWOULDBLOCK &&
-				    errno != ECONNABORTED)
+				    errno != ECONNABORTED && errno != EAGAIN)
 					error("accept: %.100s",
 					    strerror(errno));
 				if (errno == EMFILE || errno == ENFILE)
@@ -1359,6 +1374,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			 * the child process the connection. The
 			 * parent continues listening.
 			 */
+			platform_pre_fork();
 			if ((pid = fork()) == 0) {
 				/*
 				 * Child.  Close the listening and
@@ -1368,6 +1384,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 				 * We break out of the loop to handle
 				 * the connection.
 				 */
+				platform_post_fork_child();
 				startup_pipe = startup_p[1];
 				close_startup_pipes();
 				close_listen_socks();
@@ -1383,6 +1400,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			}
 
 			/* Parent.  Stay in the loop. */
+			platform_post_fork_parent(pid);
 			if (pid < 0)
 				error("fork: %.100s", strerror(errno));
 			else
@@ -1409,6 +1427,17 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			}
 
 			close(*newsock);
+
+			/*
+			 * Ensure that our random state differs
+			 * from that of the child
+			 */
+			arc4random_stir();
+			arc4random_buf(rnd, sizeof(rnd));
+#ifdef WITH_OPENSSL
+			RAND_seed(rnd, sizeof(rnd));
+#endif
+			explicit_bzero(rnd, sizeof(rnd));
 		}
 
 		/* child process check (or debug mode) */
@@ -1441,9 +1470,27 @@ main(int ac, char **av)
 	Authctxt *authctxt;
 	struct connection_info *connection_info = get_connection_info(0, 0);
 
-	/* Save argv. */
-	saved_argv = av;
+#ifdef HAVE_SECUREWARE
+	(void)set_auth_parameters(ac, av);
+#endif
+	__progname = ssh_get_progname(av[0]);
+
+	/* Save argv. Duplicate so setproctitle emulation doesn't clobber it */
+	saved_argc = ac;
 	rexec_argc = ac;
+	saved_argv = xcalloc(ac + 1, sizeof(*saved_argv));
+	for (i = 0; i < ac; i++)
+		saved_argv[i] = xstrdup(av[i]);
+	saved_argv[i] = NULL;
+
+#ifndef HAVE_SETPROCTITLE
+	/* Prepare for later setproctitle emulation */
+	compat_init_setproctitle(ac, av);
+	av = saved_argv;
+#endif
+
+	if (geteuid() == 0 && setgroups(0, NULL) == -1)
+		debug("setgroups(): %.200s", strerror(errno));
 
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
@@ -1576,11 +1623,9 @@ main(int ac, char **av)
 	if (!test_flag && (rexec_flag && (av[0] == NULL || *av[0] != '/')))
 		fatal("sshd re-exec requires execution with an absolute path");
 	if (rexeced_flag)
-		r = closefrom(REEXEC_MIN_FREE_FD);
+		closefrom(REEXEC_MIN_FREE_FD);
 	else
-		r = closefrom(REEXEC_DEVCRYPTO_RESERVED_FD);
-	if (r == -1)
-		fatal("closefrom failed: %.200s", strerror(errno));
+		closefrom(REEXEC_DEVCRYPTO_RESERVED_FD);
 
 #ifdef WITH_OPENSSL
 	OpenSSL_add_all_algorithms();
@@ -1601,6 +1646,20 @@ main(int ac, char **av)
 	    options.log_facility == SYSLOG_FACILITY_NOT_SET ?
 	    SYSLOG_FACILITY_AUTH : options.log_facility,
 	    log_stderr || !inetd_flag);
+
+	/*
+	 * Unset KRB5CCNAME, otherwise the user's session may inherit it from
+	 * root's environment
+	 */
+	if (getenv("KRB5CCNAME") != NULL)
+		(void) unsetenv("KRB5CCNAME");
+
+#ifdef _UNICOS
+	/* Cray can define user privs drop all privs now!
+	 * Not needed on PRIV_SU systems!
+	 */
+	drop_cray_privs();
+#endif
 
 	sensitive_data.server_key = NULL;
 	sensitive_data.ssh1_host_key = NULL;
@@ -1628,6 +1687,8 @@ main(int ac, char **av)
 
 	parse_server_config(&options, rexeced_flag ? "rexec" : config_file_name,
 	    &cfg, NULL);
+
+	seed_rng();
 
 	/* Fill in default values for those options not explicitly set. */
 	fill_default_server_options(&options);
@@ -1677,16 +1738,6 @@ main(int ac, char **av)
 		exit(1);
 	}
 
-#ifdef WITH_LDAP_PUBKEY
-	/* ldap_options_print(&options.lpk); */
-	/* XXX initialize/check ldap connection and set *LD */
-	if (options.lpk.on) {
-	    if (options.lpk.l_conf && (ldap_parse_lconf(&options.lpk) < 0) )
-		error("[LDAP] could not parse %s", options.lpk.l_conf);
-	    if (ldap_connect(&options.lpk) < 0)
-		error("[LDAP] could not initialize ldap connection");
-	}
-#endif
 	debug("sshd version %s, %s", SSH_VERSION,
 #ifdef WITH_OPENSSL
 	    SSLeay_version(SSLEAY_VERSION)
@@ -1694,7 +1745,21 @@ main(int ac, char **av)
 	    "without OpenSSL"
 #endif
 	);
- 
+
+	/* Store privilege separation user for later use if required. */
+	if ((privsep_pw = getpwnam(SSH_PRIVSEP_USER)) == NULL) {
+		if (use_privsep || options.kerberos_authentication)
+			fatal("Privilege separation user %s does not exist",
+			    SSH_PRIVSEP_USER);
+	} else {
+		explicit_bzero(privsep_pw->pw_passwd,
+		    strlen(privsep_pw->pw_passwd));
+		privsep_pw = pwcopy(privsep_pw);
+		free(privsep_pw->pw_passwd);
+		privsep_pw->pw_passwd = xstrdup("*");
+	}
+	endpwent();
+
 	/* load host keys */
 	sensitive_data.host_keys = xcalloc(options.num_host_key_files,
 	    sizeof(Key *));
@@ -1844,14 +1909,18 @@ main(int ac, char **av)
 	if (use_privsep) {
 		struct stat st;
 
-		if (getpwnam(SSH_PRIVSEP_USER) == NULL)
-			fatal("Privilege separation user %s does not exist",
-			    SSH_PRIVSEP_USER);
 		if ((stat(_PATH_PRIVSEP_CHROOT_DIR, &st) == -1) ||
 		    (S_ISDIR(st.st_mode) == 0))
 			fatal("Missing privilege separation directory: %s",
 			    _PATH_PRIVSEP_CHROOT_DIR);
+
+#ifdef HAVE_CYGWIN
+		if (check_ntsec(_PATH_PRIVSEP_CHROOT_DIR) &&
+		    (st.st_uid != getuid () ||
+		    (st.st_mode & (S_IWGRP|S_IWOTH)) != 0))
+#else
 		if (st.st_uid != 0 || (st.st_mode & (S_IWGRP|S_IWOTH)) != 0)
+#endif
 			fatal("%s must be owned by root and not group or "
 			    "world-writable.", _PATH_PRIVSEP_CHROOT_DIR);
 	}
@@ -1866,13 +1935,23 @@ main(int ac, char **av)
 	if (test_flag)
 		exit(0);
 
+	/*
+	 * Clear out any supplemental groups we may have inherited.  This
+	 * prevents inadvertent creation of files with bad modes (in the
+	 * portable version at least, it's certainly possible for PAM
+	 * to create a file, and we can't control the code in every
+	 * module which might be used).
+	 */
+	if (setgroups(0, NULL) < 0)
+		debug("setgroups() failed: %.200s", strerror(errno));
+
 	if (rexec_flag) {
 		rexec_argv = xcalloc(rexec_argc + 2, sizeof(char *));
 		for (i = 0; i < rexec_argc; i++) {
 			debug("rexec_argv[%d]='%s'", i, saved_argv[i]);
 			rexec_argv[i] = saved_argv[i];
 		}
-		rexec_argv[rexec_argc] = __UNCONST("-R");
+		rexec_argv[rexec_argc] = "-R";
 		rexec_argv[rexec_argc + 1] = NULL;
 	}
 
@@ -1891,17 +1970,20 @@ main(int ac, char **av)
 	 * exits.
 	 */
 	if (!(debug_flag || inetd_flag || no_daemon_flag)) {
+#ifdef TIOCNOTTY
 		int fd;
-
+#endif /* TIOCNOTTY */
 		if (daemon(0, 0) < 0)
 			fatal("daemon() failed: %.200s", strerror(errno));
 
 		/* Disconnect from the controlling tty. */
+#ifdef TIOCNOTTY
 		fd = open(_PATH_TTY, O_RDWR | O_NOCTTY);
 		if (fd >= 0) {
 			(void) ioctl(fd, TIOCNOTTY, NULL);
 			close(fd);
 		}
+#endif /* TIOCNOTTY */
 	}
 	/* Reinitialize the log (because of the fork above). */
 	log_init(__progname, options.log_level, options.log_facility, log_stderr);
@@ -1918,6 +2000,7 @@ main(int ac, char **av)
 	if (inetd_flag) {
 		server_accept_inetd(&sock_in, &sock_out);
 	} else {
+		platform_pre_listen();
 		server_listen();
 
 		if (options.protocol & SSH_PROTO_1)
@@ -1957,8 +2040,15 @@ main(int ac, char **av)
 	 * setlogin() affects the entire process group.  We don't
 	 * want the child to be able to affect the parent.
 	 */
+#if !defined(SSHD_ACQUIRES_CTTY)
+	/*
+	 * If setsid is called, on some platforms sshd will later acquire a
+	 * controlling terminal which will result in "could not set
+	 * controlling tty" errors.
+	 */
 	if (!debug_flag && !inetd_flag && setsid() < 0)
 		error("setsid: %.100s", strerror(errno));
+#endif
 
 	if (rexec_flag) {
 		int fd;
@@ -1970,7 +2060,7 @@ main(int ac, char **av)
 		if (startup_pipe == -1)
 			close(REEXEC_STARTUP_PIPE_FD);
 		else if (startup_pipe != REEXEC_STARTUP_PIPE_FD) {
- 			dup2(startup_pipe, REEXEC_STARTUP_PIPE_FD);
+			dup2(startup_pipe, REEXEC_STARTUP_PIPE_FD);
 			close(startup_pipe);
 			startup_pipe = REEXEC_STARTUP_PIPE_FD;
 		}
@@ -2014,6 +2104,7 @@ main(int ac, char **av)
 	signal(SIGTERM, SIG_DFL);
 	signal(SIGQUIT, SIG_DFL);
 	signal(SIGCHLD, SIG_DFL);
+	signal(SIGINT, SIG_DFL);
 
 	/*
 	 * Register our connection.  This turns encryption off because we do
@@ -2044,31 +2135,15 @@ main(int ac, char **av)
 	 */
 	remote_ip = get_remote_ipaddr();
 
-#ifdef LIBWRAP
-	/* Check whether logins are denied from this host. */
-	if (packet_connection_is_on_socket()) {
-		struct request_info req;
-
-		request_init(&req, RQ_DAEMON, __progname, RQ_FILE, sock_in, 0);
-		fromhost(&req);
-
-		if (!hosts_access(&req)) {
-			debug("Connection refused by tcp wrapper");
-			refuse(&req);
-			/* NOTREACHED */
-			fatal("libwrap refuse returns");
-		}
-	}
-#endif /* LIBWRAP */
+#ifdef SSH_AUDIT_EVENTS
+	audit_connection_from(remote_ip, remote_port);
+#endif
 
 	/* Log the connection. */
 	laddr = get_local_ipaddr(sock_in);
 	verbose("Connection from %s port %d on %s port %d",
 	    remote_ip, remote_port, laddr,  get_local_port());
 	free(laddr);
-
-	/* set the HPN options for the child */
-	channel_set_hpn(options.hpn_disabled, options.hpn_buffer_size);
 
 	/*
 	 * We don't want to listen forever unless the other side
@@ -2092,6 +2167,8 @@ main(int ac, char **av)
 
 	/* allocate authentication context */
 	authctxt = xcalloc(1, sizeof(*authctxt));
+
+	authctxt->loginmsg = &loginmsg;
 
 	/* XXX global for cleanup, access from other modules */
 	the_authctxt = authctxt;
@@ -2145,6 +2222,17 @@ main(int ac, char **av)
 		startup_pipe = -1;
 	}
 
+#ifdef SSH_AUDIT_EVENTS
+	audit_event(SSH_AUTH_SUCCESS);
+#endif
+
+#ifdef GSSAPI
+	if (options.gss_authentication) {
+		temporarily_use_uid(authctxt->pw);
+		ssh_gssapi_storecreds();
+		restore_uid();
+	}
+#endif
 #ifdef USE_PAM
 	if (options.use_pam) {
 		do_pam_setcred(1);
@@ -2173,17 +2261,22 @@ main(int ac, char **av)
 	/* Start session. */
 	do_authenticated(authctxt);
 
-#ifdef USE_PAM
-	if (options.use_pam)
-		finish_pam();
-#endif /* USE_PAM */
-
 	/* The connection has been terminated. */
 	packet_get_bytes(&ibytes, &obytes);
 	verbose("Transferred: sent %llu, received %llu bytes",
 	    (unsigned long long)obytes, (unsigned long long)ibytes);
 
 	verbose("Closing connection to %.500s port %d", remote_ip, remote_port);
+
+#ifdef USE_PAM
+	if (options.use_pam)
+		finish_pam();
+#endif /* USE_PAM */
+
+#ifdef SSH_AUDIT_EVENTS
+	PRIVSEP(audit_event(SSH_CONNECTION_CLOSE));
+#endif
+
 	packet_close();
 
 	if (use_privsep)
@@ -2300,18 +2393,6 @@ do_ssh1_kex(void)
 		auth_mask |= 1 << SSH_AUTH_RHOSTS_RSA;
 	if (options.rsa_authentication)
 		auth_mask |= 1 << SSH_AUTH_RSA;
-#if defined(KRB4) || defined(KRB5)
-	if (options.kerberos_authentication)
-		auth_mask |= 1 << SSH_AUTH_KERBEROS;
-#endif
-#if defined(AFS) || defined(KRB5)
-	if (options.kerberos_tgt_passing)
-		auth_mask |= 1 << SSH_PASS_KERBEROS_TGT;
-#endif
-#ifdef AFS
-	if (options.afs_token_passing)
-		auth_mask |= 1 << SSH_PASS_AFS_TOKEN;
-#endif
 	if (options.challenge_response_authentication == 1)
 		auth_mask |= 1 << SSH_AUTH_TIS;
 	if (options.password_authentication)
@@ -2454,28 +2535,16 @@ sshd_hostkey_sign(Key *privkey, Key *pubkey, u_char **signature, size_t *slen,
 static void
 do_ssh2_kex(void)
 {
-	const char *myproposal[PROPOSAL_MAX] = { KEX_SERVER };
+	char *myproposal[PROPOSAL_MAX] = { KEX_SERVER };
 	struct kex *kex;
 	int r;
 
 	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
 	    options.kex_algorithms);
-
-	if (strcmp(options.ciphers, KEX_SERVER_ENCRYPT) == 0 &&
-	    options.none_enabled == 1) {
-		debug ("WARNING: None cipher enabled");
-		myproposal[PROPOSAL_ENC_ALGS_CTOS] =
-		myproposal[PROPOSAL_ENC_ALGS_STOC] = KEX_SERVER_ENCRYPT_INCLUDE_NONE;
-	} else {
-		myproposal[PROPOSAL_ENC_ALGS_CTOS] =
-		myproposal[PROPOSAL_ENC_ALGS_STOC] = options.ciphers;
-	}
-
-	myproposal[PROPOSAL_ENC_ALGS_CTOS] =
-	    compat_cipher_proposal(myproposal[PROPOSAL_ENC_ALGS_CTOS]);
-	myproposal[PROPOSAL_ENC_ALGS_STOC] =
-	    compat_cipher_proposal(myproposal[PROPOSAL_ENC_ALGS_STOC]);
-
+	myproposal[PROPOSAL_ENC_ALGS_CTOS] = compat_cipher_proposal(
+	    options.ciphers);
+	myproposal[PROPOSAL_ENC_ALGS_STOC] = compat_cipher_proposal(
+	    options.ciphers);
 	myproposal[PROPOSAL_MAC_ALGS_CTOS] =
 	    myproposal[PROPOSAL_MAC_ALGS_STOC] = options.macs;
 
@@ -2503,7 +2572,9 @@ do_ssh2_kex(void)
 	kex->kex[KEX_DH_GRP14_SHA1] = kexdh_server;
 	kex->kex[KEX_DH_GEX_SHA1] = kexgex_server;
 	kex->kex[KEX_DH_GEX_SHA256] = kexgex_server;
+# ifdef OPENSSL_HAS_ECC
 	kex->kex[KEX_ECDH_SHA2] = kexecdh_server;
+# endif
 #endif
 	kex->kex[KEX_C25519_SHA256] = kexc25519_server;
 	kex->server = 1;
@@ -2544,5 +2615,10 @@ cleanup_exit(int i)
 				    pmonitor->m_pid, strerror(errno));
 		}
 	}
+#ifdef SSH_AUDIT_EVENTS
+	/* done after do_cleanup so it can cancel the PAM auth 'thread' */
+	if (!use_privsep || mm_is_monitor())
+		audit_event(SSH_CONNECTION_ABANDON);
+#endif
 	_exit(i);
 }

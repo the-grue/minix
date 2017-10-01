@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh.c,v 1.19 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: ssh.c,v 1.420 2015/07/30 00:01:34 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -42,24 +41,26 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh.c,v 1.19 2015/08/13 10:33:21 christos Exp $");
+
 #include <sys/types.h>
-#include <sys/param.h>
-#include <sys/ioctl.h>
-#include <sys/queue.h>
+#ifdef HAVE_SYS_STAT_H
+# include <sys/stat.h>
+#endif
 #include <sys/resource.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#ifdef HAVE_PATHS_H
 #include <paths.h>
+#endif
 #include <pwd.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,11 +69,14 @@ __RCSID("$NetBSD: ssh.c,v 1.19 2015/08/13 10:33:21 christos Exp $");
 #include <limits.h>
 
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #ifdef WITH_OPENSSL
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #endif
+#include "openbsd-compat/openssl-compat.h"
+#include "openbsd-compat/sys-queue.h"
 
 #include "xmalloc.h"
 #include "ssh.h"
@@ -111,6 +115,11 @@ __RCSID("$NetBSD: ssh.c,v 1.19 2015/08/13 10:33:21 christos Exp $");
 #endif
 
 extern char *__progname;
+
+/* Saves a copy of argv for setproctitle emulation */
+#ifndef HAVE_SETPROCTITLE
+static char **saved_av;
+#endif
 
 /* Flag indicating whether debug mode is on.  May be set on the command line. */
 int debug_flag = 0;
@@ -188,7 +197,7 @@ extern u_int muxclient_command;
 
 /* Prints a help message to the user.  This function never returns. */
 
-__dead static void
+static void
 usage(void)
 {
 	fprintf(stderr,
@@ -512,12 +521,24 @@ main(int ac, char **av)
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
 
+	__progname = ssh_get_progname(av[0]);
+
+#ifndef HAVE_SETPROCTITLE
+	/* Prepare for later setproctitle emulation */
+	/* Save argv so it isn't clobbered by setproctitle() emulation */
+	saved_av = xcalloc(ac + 1, sizeof(*saved_av));
+	for (i = 0; i < ac; i++)
+		saved_av[i] = xstrdup(av[i]);
+	saved_av[i] = NULL;
+	compat_init_setproctitle(ac, av);
+	av = saved_av;
+#endif
+
 	/*
 	 * Discard other fds that are hanging around. These can cause problem
 	 * with backgrounded ssh processes started by ControlPersist.
 	 */
-	if (closefrom(STDERR_FILENO + 1) == -1)
-		fatal("closefrom failed: %.100s", strerror(errno));
+	closefrom(STDERR_FILENO + 1);
 
 	/*
 	 * Save the original real uid.  It will be needed later (uid-swapping
@@ -535,6 +556,7 @@ main(int ac, char **av)
 	 */
 	PRIV_END;
 
+#ifdef HAVE_SETRLIMIT
 	/* If we are installed setuid root be careful to not drop core. */
 	if (original_real_uid != original_effective_uid) {
 		struct rlimit rlim;
@@ -542,6 +564,7 @@ main(int ac, char **av)
 		if (setrlimit(RLIMIT_CORE, &rlim) < 0)
 			fatal("setrlimit failed: %.100s", strerror(errno));
 	}
+#endif
 	/* Get user data. */
 	pw = getpwuid(original_real_uid);
 	if (!pw) {
@@ -713,7 +736,7 @@ main(int ac, char **av)
 			break;
 		case 'V':
 			fprintf(stderr, "%s, %s\n",
-			    SSH_VERSION,
+			    SSH_RELEASE,
 #ifdef WITH_OPENSSL
 			    SSLeay_version(SSLEAY_VERSION)
 #else
@@ -861,10 +884,6 @@ main(int ac, char **av)
 			break;
 		case 'T':
 			options.request_tty = REQUEST_TTY_NO;
-			/* ensure that the user doesn't try to backdoor a */
-			/* null cipher switch on an interactive session */
-			/* so explicitly disable it no matter what */
-			options.none_switch = 0;
 			break;
 		case 'o':
 			line = xstrdup(optarg);
@@ -970,7 +989,7 @@ main(int ac, char **av)
 	    SYSLOG_FACILITY_USER, !use_syslog);
 
 	if (debug_flag)
-		logit("%s, %s", SSH_VERSION,
+		logit("%s, %s", SSH_RELEASE,
 #ifdef WITH_OPENSSL
 		    SSLeay_version(SSLEAY_VERSION)
 #else
@@ -1065,8 +1084,10 @@ main(int ac, char **av)
 		    "disabling");
 		options.update_hostkeys = 0;
 	}
+#ifndef HAVE_CYGWIN
 	if (original_effective_uid != 0)
 		options.use_privileged_port = 0;
+#endif
 
 	/* reinit */
 	log_init(argv0, options.log_level, SYSLOG_FACILITY_USER, !use_syslog);
@@ -1090,6 +1111,8 @@ main(int ac, char **av)
 			    "stdin is not a terminal.");
 		tty_flag = 0;
 	}
+
+	seed_rng();
 
 	if (options.user == NULL)
 		options.user = xstrdup(pw->pw_name);
@@ -1173,7 +1196,7 @@ main(int ac, char **av)
 	    options.address_family, options.connection_attempts,
 	    &timeout_ms, options.tcp_keep_alive,
 	    options.use_privileged_port) != 0)
-		exit(255);
+ 		exit(255);
 
 	if (addrs != NULL)
 		freeaddrinfo(addrs);
@@ -1200,20 +1223,26 @@ main(int ac, char **av)
 		sensitive_data.nkeys = 9;
 		sensitive_data.keys = xcalloc(sensitive_data.nkeys,
 		    sizeof(Key));
+		for (i = 0; i < sensitive_data.nkeys; i++)
+			sensitive_data.keys[i] = NULL;
 
 		PRIV_START;
 		sensitive_data.keys[0] = key_load_private_type(KEY_RSA1,
 		    _PATH_HOST_KEY_FILE, "", NULL, NULL);
+#ifdef OPENSSL_HAS_ECC
 		sensitive_data.keys[1] = key_load_private_cert(KEY_ECDSA,
 		    _PATH_HOST_ECDSA_KEY_FILE, "", NULL);
+#endif
 		sensitive_data.keys[2] = key_load_private_cert(KEY_ED25519,
 		    _PATH_HOST_ED25519_KEY_FILE, "", NULL);
 		sensitive_data.keys[3] = key_load_private_cert(KEY_RSA,
 		    _PATH_HOST_RSA_KEY_FILE, "", NULL);
 		sensitive_data.keys[4] = key_load_private_cert(KEY_DSA,
 		    _PATH_HOST_DSA_KEY_FILE, "", NULL);
+#ifdef OPENSSL_HAS_ECC
 		sensitive_data.keys[5] = key_load_private_type(KEY_ECDSA,
 		    _PATH_HOST_ECDSA_KEY_FILE, "", NULL, NULL);
+#endif
 		sensitive_data.keys[6] = key_load_private_type(KEY_ED25519,
 		    _PATH_HOST_ED25519_KEY_FILE, "", NULL, NULL);
 		sensitive_data.keys[7] = key_load_private_type(KEY_RSA,
@@ -1228,16 +1257,20 @@ main(int ac, char **av)
 		    sensitive_data.keys[6] == NULL &&
 		    sensitive_data.keys[7] == NULL &&
 		    sensitive_data.keys[8] == NULL) {
+#ifdef OPENSSL_HAS_ECC
 			sensitive_data.keys[1] = key_load_cert(
 			    _PATH_HOST_ECDSA_KEY_FILE);
+#endif
 			sensitive_data.keys[2] = key_load_cert(
 			    _PATH_HOST_ED25519_KEY_FILE);
 			sensitive_data.keys[3] = key_load_cert(
 			    _PATH_HOST_RSA_KEY_FILE);
 			sensitive_data.keys[4] = key_load_cert(
 			    _PATH_HOST_DSA_KEY_FILE);
+#ifdef OPENSSL_HAS_ECC
 			sensitive_data.keys[5] = key_load_public(
 			    _PATH_HOST_ECDSA_KEY_FILE, NULL);
+#endif
 			sensitive_data.keys[6] = key_load_public(
 			    _PATH_HOST_ED25519_KEY_FILE, NULL);
 			sensitive_data.keys[7] = key_load_public(
@@ -1266,12 +1299,18 @@ main(int ac, char **av)
 	if (config == NULL) {
 		r = snprintf(buf, sizeof buf, "%s%s%s", pw->pw_dir,
 		    strcmp(pw->pw_dir, "/") ? "/" : "", _PATH_SSH_USER_DIR);
-		if (r > 0 && (size_t)r < sizeof(buf) && stat(buf, &st) < 0)
+		if (r > 0 && (size_t)r < sizeof(buf) && stat(buf, &st) < 0) {
+#ifdef WITH_SELINUX
+			ssh_selinux_setfscreatecon(buf);
+#endif
 			if (mkdir(buf, 0700) < 0)
 				error("Could not create directory '%.200s'.",
 				    buf);
+#ifdef WITH_SELINUX
+			ssh_selinux_setfscreatecon(NULL);
+#endif
+		}
 	}
-
 	/* load options.identity_files */
 	load_public_identity_files();
 
@@ -1435,7 +1474,7 @@ ssh_confirm_remote_forward(int type, u_int32_t seq, void *ctxt)
 	}
 }
 
-__dead static void
+static void
 client_cleanup_stdio_fwd(int id, void *arg)
 {
 	debug("stdio forwarding: done");
@@ -1563,6 +1602,7 @@ ssh_session(void)
 	int interactive = 0;
 	int have_tty = 0;
 	struct winsize ws;
+	char *cp;
 	const char *display;
 
 	/* Enable compression if requested. */
@@ -1591,7 +1631,6 @@ ssh_session(void)
 	}
 	/* Allocate a pseudo tty if appropriate. */
 	if (tty_flag) {
-		const char *dp;
 		debug("Requesting pty.");
 
 		/* Start the packet. */
@@ -1599,10 +1638,10 @@ ssh_session(void)
 
 		/* Store TERM in the packet.  There is no limit on the
 		   length of the string. */
-		dp = getenv("TERM");
-		if (!dp)
-			dp = "";
-		packet_put_cstring(dp);
+		cp = getenv("TERM");
+		if (!cp)
+			cp = "";
+		packet_put_cstring(cp);
 
 		/* Store window size in the packet. */
 		if (ioctl(fileno(stdin), TIOCGWINSZ, &ws) < 0)
@@ -1775,9 +1814,6 @@ ssh_session2_open(void)
 {
 	Channel *c;
 	int window, packetmax, in, out, err;
-	int sock;
-	int socksize;
-	socklen_t socksizelen = sizeof(int);
 
 	if (stdin_null_flag) {
 		in = open(_PATH_DEVNULL, O_RDONLY);
@@ -1798,75 +1834,9 @@ ssh_session2_open(void)
 	if (!isatty(err))
 		set_nonblock(err);
 
-	/* we need to check to see if what they want to do about buffer */
-	/* sizes here. In a hpn to nonhpn connection we want to limit */
-	/* the window size to something reasonable in case the far side */
-	/* has the large window bug. In hpn to hpn connection we want to */
-	/* use the max window size but allow the user to override it */
-	/* lastly if they disabled hpn then use the ssh std window size */
-
-	/* so why don't we just do a getsockopt() here and set the */
-	/* ssh window to that? In the case of a autotuning receive */
-	/* window the window would get stuck at the initial buffer */
-	/* size generally less than 96k. Therefore we need to set the */
-	/* maximum ssh window size to the maximum hpn buffer size */
-	/* unless the user has specifically set the tcprcvbufpoll */
-	/* to no. In which case we *can* just set the window to the */
-	/* minimum of the hpn buffer size and tcp receive buffer size */
-	
-	if (tty_flag)
-		options.hpn_buffer_size = CHAN_SES_WINDOW_DEFAULT;
-	else
-		options.hpn_buffer_size = 2*1024*1024;
-
-	if (datafellows & SSH_BUG_LARGEWINDOW) 
-	{
-		debug("HPN to Non-HPN Connection");
-	} 
-	else 
-	{
-		if (options.tcp_rcv_buf_poll <= 0) 
-		{
-			sock = socket(AF_INET, SOCK_STREAM, 0);
-			getsockopt(sock, SOL_SOCKET, SO_RCVBUF, 
-				   &socksize, &socksizelen);
-			close(sock);
-			debug("socksize %d", socksize);
-			options.hpn_buffer_size = socksize;
-			debug ("HPNBufferSize set to TCP RWIN: %d", options.hpn_buffer_size);
-		} 
-		else
-		{
-			if (options.tcp_rcv_buf > 0) 
-			{
-				/*create a socket but don't connect it */
-				/* we use that the get the rcv socket size */
-				sock = socket(AF_INET, SOCK_STREAM, 0);
-				/* if they are using the tcp_rcv_buf option */
-				/* attempt to set the buffer size to that */
-				if (options.tcp_rcv_buf) 
-					setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (void *)&options.tcp_rcv_buf, 
-						   sizeof(options.tcp_rcv_buf));
-				getsockopt(sock, SOL_SOCKET, SO_RCVBUF, 
-					   &socksize, &socksizelen);
-				close(sock);
-				debug("socksize %d", socksize);
-				options.hpn_buffer_size = socksize;
-				debug ("HPNBufferSize set to user TCPRcvBuf: %d", options.hpn_buffer_size);
-			}
- 		}
-		
-	}
-
-	debug("Final hpn_buffer_size = %d", options.hpn_buffer_size);
-
-	window = options.hpn_buffer_size;
-
-	channel_set_hpn(options.hpn_disabled, options.hpn_buffer_size);
-
+	window = CHAN_SES_WINDOW_DEFAULT;
 	packetmax = CHAN_SES_PACKET_DEFAULT;
 	if (tty_flag) {
-		window = 4*CHAN_SES_PACKET_DEFAULT;
 		window >>= 1;
 		packetmax >>= 1;
 	}
@@ -1875,10 +1845,6 @@ ssh_session2_open(void)
 	    window, packetmax, CHAN_EXTENDED_WRITE,
 	    "client-session", /*nonblock*/0);
 
-	if ((options.tcp_rcv_buf_poll > 0) && (!options.hpn_disabled)) {
-		c->dynamic_window = 1;
-		debug ("Enabled Dynamic Window Scaling");
-	}
 	debug3("ssh_session2_open: channel_new: %d", c->self);
 
 	channel_send_open(c->self);

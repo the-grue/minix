@@ -1,5 +1,3 @@
-.\"	$NetBSD: sshd.8,v 1.15 2015/08/13 10:33:21 christos Exp $
-.\"  -*- nroff -*-
 .\"
 .\" Author: Tatu Ylonen <ylo@cs.hut.fi>
 .\" Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -36,7 +34,7 @@
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
 .\" $OpenBSD: sshd.8,v 1.280 2015/07/03 03:49:45 djm Exp $
-.Dd July 3 2015
+.Dd $Mdocdate: July 3 2015 $
 .Dt SSHD 8
 .Os
 .Sh NAME
@@ -69,7 +67,7 @@ over an insecure network.
 .Nm
 listens for connections from clients.
 It is normally started at boot from
-.Pa /etc/rc.d/sshd .
+.Pa /etc/rc .
 It forks a new
 daemon for each incoming connection.
 The forked daemons handle
@@ -325,6 +323,33 @@ host-based authentication,
 public key authentication,
 challenge-response authentication,
 or password authentication.
+.Pp
+Regardless of the authentication type, the account is checked to
+ensure that it is accessible.  An account is not accessible if it is
+locked, listed in
+.Cm DenyUsers
+or its group is listed in
+.Cm DenyGroups
+\&.  The definition of a locked account is system dependant. Some platforms
+have their own account database (eg AIX) and some modify the passwd field (
+.Ql \&*LK\&*
+on Solaris and UnixWare,
+.Ql \&*
+on HP-UX, containing
+.Ql Nologin
+on Tru64,
+a leading
+.Ql \&*LOCKED\&*
+on FreeBSD and a leading
+.Ql \&!
+on most Linuxes).
+If there is a requirement to disable password authentication
+for the account while allowing still public-key, then the passwd field
+should be set to something other than these values (eg
+.Ql NP
+or
+.Ql \&*NP\&*
+).
 .Pp
 If the client successfully authenticates itself, a dialog for
 preparing the session is entered.

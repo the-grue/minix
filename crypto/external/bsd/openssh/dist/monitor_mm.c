@@ -1,4 +1,3 @@
-/*	$NetBSD: monitor_mm.c,v 1.6 2015/04/03 23:58:19 christos Exp $	*/
 /* $OpenBSD: monitor_mm.c,v 1.21 2015/02/06 23:21:59 millert Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
@@ -26,15 +25,19 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: monitor_mm.c,v 1.6 2015/04/03 23:58:19 christos Exp $");
+
 #include <sys/types.h>
+#ifdef HAVE_SYS_MMAN_H
 #include <sys/mman.h>
-#include <sys/tree.h>
+#endif
+#include "openbsd-compat/sys-tree.h"
 
 #include <errno.h>
 #include <stdarg.h>
 #include <stddef.h>
+#ifdef HAVE_STDINT_H
 #include <stdint.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -99,9 +102,8 @@ mm_create(struct mm_master *mmalloc, size_t size)
 	 */
 	mm->mmalloc = mmalloc;
 
-	address = mmap(NULL, size, PROT_WRITE|PROT_READ, MAP_ANON|MAP_SHARED,
-	    -1, 0);
-	if (address == MAP_FAILED)
+	address = xmmap(size);
+	if (address == (void *)MAP_FAILED)
 		fatal("mmap(%zu): %s", size, strerror(errno));
 
 	mm->address = address;
@@ -140,9 +142,14 @@ mm_destroy(struct mm_master *mm)
 	mm_freelist(mm->mmalloc, &mm->rb_free);
 	mm_freelist(mm->mmalloc, &mm->rb_allocated);
 
+#ifdef HAVE_MMAP
 	if (munmap(mm->address, mm->size) == -1)
 		fatal("munmap(%p, %zu): %s", mm->address, mm->size,
 		    strerror(errno));
+#else
+	fatal("%s: UsePrivilegeSeparation=yes and Compression=yes not supported",
+	    __func__);
+#endif
 	if (mm->mmalloc == NULL)
 		free(mm);
 	else

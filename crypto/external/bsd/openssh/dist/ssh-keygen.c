@@ -1,4 +1,3 @@
-/*	$NetBSD: ssh-keygen.c,v 1.19 2015/08/21 08:20:59 christos Exp $	*/
 /* $OpenBSD: ssh-keygen.c,v 1.277 2015/08/19 23:17:51 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -14,18 +13,25 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-keygen.c,v 1.19 2015/08/21 08:20:59 christos Exp $");
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 
+#ifdef WITH_OPENSSL
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include "openbsd-compat/openssl-compat.h"
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#ifdef HAVE_PATHS_H
+# include <paths.h>
+#endif
 #include <pwd.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,13 +53,10 @@ __RCSID("$NetBSD: ssh-keygen.c,v 1.19 2015/08/21 08:20:59 christos Exp $");
 #include "ssh.h"
 #include "ssh2.h"
 #include "ssherr.h"
+#include "ssh-pkcs11.h"
 #include "atomicio.h"
 #include "krl.h"
 #include "digest.h"
-
-#ifdef ENABLE_PKCS11
-#include "ssh-pkcs11.h"
-#endif
 
 #ifdef WITH_OPENSSL
 # define DEFAULT_KEY_TYPE_NAME "rsa"
@@ -155,7 +158,7 @@ enum {
 int print_public = 0;
 int print_generic = 0;
 
-const char *key_type_name = NULL;
+char *key_type_name = NULL;
 
 /* Load key from this PKCS#11 provider */
 char *pkcs11provider = NULL;
@@ -203,8 +206,7 @@ type_bits_valid(int type, const char *name, u_int32_t *bitsp)
 				*bitsp = sshkey_curve_nid_to_bits(nid);
 			if (*bitsp == 0)
 				*bitsp = DEFAULT_BITS_ECDSA;
-		}
-		else
+		} else
 #endif
 			*bitsp = DEFAULT_BITS;
 	}
@@ -227,7 +229,7 @@ static void
 ask_filename(struct passwd *pw, const char *prompt)
 {
 	char buf[1024];
-	const char *name = NULL;
+	char *name = NULL;
 
 	if (key_type_name == NULL)
 		name = _PATH_SSH_CLIENT_ID_RSA;
@@ -240,10 +242,12 @@ ask_filename(struct passwd *pw, const char *prompt)
 		case KEY_DSA:
 			name = _PATH_SSH_CLIENT_ID_DSA;
 			break;
+#ifdef OPENSSL_HAS_ECC
 		case KEY_ECDSA_CERT:
 		case KEY_ECDSA:
 			name = _PATH_SSH_CLIENT_ID_ECDSA;
 			break;
+#endif
 		case KEY_RSA_CERT:
 		case KEY_RSA:
 			name = _PATH_SSH_CLIENT_ID_RSA;
@@ -297,7 +301,7 @@ load_identity(char *filename)
 #define	SSH_COM_PRIVATE_KEY_MAGIC	0x3f6ff9eb
 
 #ifdef WITH_OPENSSL
-__dead static void
+static void
 do_convert_to_ssh2(struct passwd *pw, struct sshkey *k)
 {
 	size_t len;
@@ -324,7 +328,7 @@ do_convert_to_ssh2(struct passwd *pw, struct sshkey *k)
 	exit(0);
 }
 
-__dead static void
+static void
 do_convert_to_pkcs8(struct sshkey *k)
 {
 	switch (sshkey_type_plain(k->type)) {
@@ -337,17 +341,19 @@ do_convert_to_pkcs8(struct sshkey *k)
 		if (!PEM_write_DSA_PUBKEY(stdout, k->dsa))
 			fatal("PEM_write_DSA_PUBKEY failed");
 		break;
+#ifdef OPENSSL_HAS_ECC
 	case KEY_ECDSA:
 		if (!PEM_write_EC_PUBKEY(stdout, k->ecdsa))
 			fatal("PEM_write_EC_PUBKEY failed");
 		break;
+#endif
 	default:
 		fatal("%s: unsupported key type %s", __func__, sshkey_type(k));
 	}
 	exit(0);
 }
 
-__dead static void
+static void
 do_convert_to_pem(struct sshkey *k)
 {
 	switch (sshkey_type_plain(k->type)) {
@@ -369,7 +375,7 @@ do_convert_to_pem(struct sshkey *k)
 	exit(0);
 }
 
-__dead static void
+static void
 do_convert_to(struct passwd *pw)
 {
 	struct sshkey *k;
@@ -628,6 +634,7 @@ do_convert_from_pkcs8(struct sshkey **k, int *private)
 		(*k)->type = KEY_DSA;
 		(*k)->dsa = EVP_PKEY_get1_DSA(pubkey);
 		break;
+#ifdef OPENSSL_HAS_ECC
 	case EVP_PKEY_EC:
 		if ((*k = sshkey_new(KEY_UNSPEC)) == NULL)
 			fatal("sshkey_new failed");
@@ -635,6 +642,7 @@ do_convert_from_pkcs8(struct sshkey **k, int *private)
 		(*k)->ecdsa = EVP_PKEY_get1_EC_KEY(pubkey);
 		(*k)->ecdsa_nid = sshkey_ecdsa_key_to_nid((*k)->ecdsa);
 		break;
+#endif
 	default:
 		fatal("%s: unsupported pubkey type %d", __func__,
 		    EVP_PKEY_type(pubkey->type));
@@ -677,7 +685,7 @@ do_convert_from_pem(struct sshkey **k, int *private)
 	fatal("%s: unrecognised raw private key format", __func__);
 }
 
-__dead static void
+static void
 do_convert_from(struct passwd *pw)
 {
 	struct sshkey *k = NULL;
@@ -714,10 +722,12 @@ do_convert_from(struct passwd *pw)
 			ok = PEM_write_DSAPrivateKey(stdout, k->dsa, NULL,
 			    NULL, 0, NULL, NULL);
 			break;
+#ifdef OPENSSL_HAS_ECC
 		case KEY_ECDSA:
 			ok = PEM_write_ECPrivateKey(stdout, k->ecdsa, NULL,
 			    NULL, 0, NULL, NULL);
 			break;
+#endif
 		case KEY_RSA:
 			ok = PEM_write_RSAPrivateKey(stdout, k->rsa, NULL,
 			    NULL, 0, NULL, NULL);
@@ -735,7 +745,7 @@ do_convert_from(struct passwd *pw)
 }
 #endif
 
-__dead static void
+static void
 do_print_public(struct passwd *pw)
 {
 	struct sshkey *prv;
@@ -754,7 +764,7 @@ do_print_public(struct passwd *pw)
 	exit(0);
 }
 
-__dead static void
+static void
 do_download(struct passwd *pw)
 {
 #ifdef ENABLE_PKCS11
@@ -798,7 +808,7 @@ do_download(struct passwd *pw)
 #endif /* ENABLE_PKCS11 */
 }
 
-__dead static void
+static void
 do_fingerprint(struct passwd *pw)
 {
 	FILE *f;
@@ -915,9 +925,9 @@ static void
 do_gen_all_hostkeys(struct passwd *pw)
 {
 	struct {
-		const char *key_type;
-		const char *key_type_display;
-		const char *path;
+		char *key_type;
+		char *key_type_display;
+		char *path;
 	} key_types[] = {
 #ifdef WITH_OPENSSL
 #ifdef WITH_SSH1
@@ -925,7 +935,9 @@ do_gen_all_hostkeys(struct passwd *pw)
 #endif /* WITH_SSH1 */
 		{ "rsa", "RSA" ,_PATH_HOST_RSA_KEY_FILE },
 		{ "dsa", "DSA", _PATH_HOST_DSA_KEY_FILE },
+#ifdef OPENSSL_HAS_ECC
 		{ "ecdsa", "ECDSA",_PATH_HOST_ECDSA_KEY_FILE },
+#endif /* OPENSSL_HAS_ECC */
 #endif /* WITH_OPENSSL */
 		{ "ed25519", "ED25519",_PATH_HOST_ED25519_KEY_FILE },
 		{ NULL, NULL, NULL }
@@ -1126,7 +1138,7 @@ known_hosts_find_delete(struct hostkey_foreach_line *l, void *_ctx)
 	return 0;
 }
 
-__dead static void
+static void
 do_known_hosts(struct passwd *pw, const char *name)
 {
 	char *cp, tmp[PATH_MAX], old[PATH_MAX];
@@ -1223,7 +1235,7 @@ do_known_hosts(struct passwd *pw, const char *name)
  * Perform changing a passphrase.  The argument is the passwd structure
  * for the current user.
  */
-__dead static void
+static void
 do_change_passphrase(struct passwd *pw)
 {
 	char *comment;
@@ -1308,8 +1320,7 @@ do_change_passphrase(struct passwd *pw)
  * Print the SSHFP RR.
  */
 static int
-do_print_resource_record(struct passwd *pw, const char *fname,
-    const char *hname)
+do_print_resource_record(struct passwd *pw, char *fname, char *hname)
 {
 	struct sshkey *public;
 	char *comment = NULL;
@@ -1335,7 +1346,7 @@ do_print_resource_record(struct passwd *pw, const char *fname,
 /*
  * Change the comment of a private key file.
  */
-__dead static void
+static void
 do_change_comment(struct passwd *pw)
 {
 	char new_comment[1024], *comment, *passphrase;
@@ -1555,7 +1566,7 @@ load_pkcs11_key(char *path)
 #endif /* ENABLE_PKCS11 */
 }
 
-__dead static void
+static void
 do_ca_sign(struct passwd *pw, int argc, char **argv)
 {
 	int r, i, fd;
@@ -1673,8 +1684,7 @@ parse_absolute_time(const char *s)
 {
 	struct tm tm;
 	time_t tt;
-	char buf[32];
-	const char *fmt;
+	char buf[32], *fmt;
 
 	/*
 	 * POSIX strptime says "The application shall ensure that there 
@@ -1840,7 +1850,7 @@ show_options(struct sshbuf *optbuf, int in_critical)
 	sshbuf_free(options);
 }
 
-__dead static void
+static void
 do_show_cert(struct passwd *pw)
 {
 	struct sshkey *key;
@@ -1901,7 +1911,6 @@ do_show_cert(struct passwd *pw)
 	exit(0);
 }
 
-#ifdef WITH_OPENSSL
 static void
 load_krl(const char *path, struct ssh_krl **krlp)
 {
@@ -2097,7 +2106,7 @@ do_gen_krl(struct passwd *pw, int updating, int argc, char **argv)
 		fatal("Couldn't generate KRL");
 	if ((fd = open(identity_file, O_WRONLY|O_CREAT|O_TRUNC, 0644)) == -1)
 		fatal("open %s: %s", identity_file, strerror(errno));
-	if (atomicio(vwrite, fd, __UNCONST(sshbuf_ptr(kbuf)), sshbuf_len(kbuf)) !=
+	if (atomicio(vwrite, fd, (void *)sshbuf_ptr(kbuf), sshbuf_len(kbuf)) !=
 	    sshbuf_len(kbuf))
 		fatal("write %s: %s", identity_file, strerror(errno));
 	close(fd);
@@ -2107,7 +2116,7 @@ do_gen_krl(struct passwd *pw, int updating, int argc, char **argv)
 		sshkey_free(ca);
 }
 
-__dead static void
+static void
 do_check_krl(struct passwd *pw, int argc, char **argv)
 {
 	int i, r, ret = 0;
@@ -2134,9 +2143,8 @@ do_check_krl(struct passwd *pw, int argc, char **argv)
 	ssh_krl_free(krl);
 	exit(ret);
 }
-#endif
 
-__dead static void
+static void
 usage(void)
 {
 	fprintf(stderr,
@@ -2203,8 +2211,14 @@ main(int argc, char **argv)
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
 
+	__progname = ssh_get_progname(argv[0]);
+
+#ifdef WITH_OPENSSL
 	OpenSSL_add_all_algorithms();
+#endif
 	log_init(argv[0], SYSLOG_LEVEL_INFO, SYSLOG_FACILITY_USER, 1);
+
+	seed_rng();
 
 	/* we need this for the home * directory.  */
 	pw = getpwuid(getuid());
@@ -2374,33 +2388,23 @@ main(int argc, char **argv)
 			break;
 #ifdef WITH_OPENSSL
 		/* Moduli generation/screening */
+		case 'W':
+			generator_wanted = (u_int32_t)strtonum(optarg, 1,
+			    UINT_MAX, &errstr);
+			if (errstr)
+				fatal("Desired generator has bad value: %s (%s)",
+					optarg, errstr);
+			break;
+		case 'M':
+			memory = (u_int32_t)strtonum(optarg, 1, UINT_MAX, &errstr);
+			if (errstr)
+				fatal("Memory limit is %s: %s", errstr, optarg);
+			break;
 		case 'G':
 			do_gen_candidates = 1;
 			if (strlcpy(out_file, optarg, sizeof(out_file)) >=
 			    sizeof(out_file))
 				fatal("Output filename too long");
-			break;
-		case 'J':
-			lines_to_process = strtoul(optarg, NULL, 10);
-                        break;
-		case 'j':
-			start_lineno = strtoul(optarg, NULL, 10);
-                        break;
-		case 'K':
-			if (strlen(optarg) >= PATH_MAX)
-				fatal("Checkpoint filename too long");
-			checkpoint = xstrdup(optarg);
-			break;
-		case 'M':
-			memory = (u_int32_t)strtonum(optarg, 1, UINT_MAX,
-			    &errstr);
-			if (errstr)
-				fatal("Memory limit is %s: %s", errstr, optarg);
-			break;
-		case 'S':
-			/* XXX - also compare length against bits */
-			if (BN_hex2bn(&start, optarg) == 0)
-				fatal("Invalid start point.");
 			break;
 		case 'T':
 			do_screen_candidates = 1;
@@ -2408,12 +2412,15 @@ main(int argc, char **argv)
 			    sizeof(out_file))
 				fatal("Output filename too long");
 			break;
-		case 'W':
-			generator_wanted = (u_int32_t)strtonum(optarg, 1,
-			    UINT_MAX, &errstr);
-			if (errstr != NULL)
-				fatal("Desired generator invalid: %s (%s)",
-				    optarg, errstr);
+		case 'K':
+			if (strlen(optarg) >= PATH_MAX)
+				fatal("Checkpoint filename too long");
+			checkpoint = xstrdup(optarg);
+			break;
+		case 'S':
+			/* XXX - also compare length against bits */
+			if (BN_hex2bn(&start, optarg) == 0)
+				fatal("Invalid start point.");
 			break;
 #endif /* WITH_OPENSSL */
 		case '?':
@@ -2445,7 +2452,6 @@ main(int argc, char **argv)
 		error("Cannot use -l with -H or -R.");
 		usage();
 	}
-#ifdef WITH_OPENSSL
 	if (gen_krl) {
 		do_gen_krl(pw, update_krl, argc, argv);
 		return (0);
@@ -2454,7 +2460,6 @@ main(int argc, char **argv)
 		do_check_krl(pw, argc, argv);
 		return (0);
 	}
-#endif
 	if (ca_key_path != NULL) {
 		if (cert_key_id == NULL)
 			fatal("Must specify key id (-I) when certifying");

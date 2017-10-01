@@ -1,4 +1,3 @@
-/*	$NetBSD: monitor.c,v 1.16 2015/08/13 10:33:21 christos Exp $	*/
 /* $OpenBSD: monitor.c,v 1.150 2015/06/22 23:42:16 djm Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
@@ -27,33 +26,44 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: monitor.c,v 1.16 2015/08/13 10:33:21 christos Exp $");
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <sys/socket.h>
-#include <sys/tree.h>
-#include <sys/queue.h>
 
-#ifdef WITH_OPENSSL
-#include <openssl/dh.h>
-#endif
+#include <sys/types.h>
+#include <sys/socket.h>
+#include "openbsd-compat/sys-tree.h"
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#ifdef HAVE_PATHS_H
 #include <paths.h>
-#include <poll.h>
+#endif
 #include <pwd.h>
 #include <signal.h>
-#include <stdarg.h>
+#ifdef HAVE_STDINT_H
 #include <stdint.h>
-#include <stdio.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <unistd.h>
+#ifdef HAVE_POLL_H
+#include <poll.h>
+#else
+# ifdef HAVE_SYS_POLL_H
+#  include <sys/poll.h>
+# endif
+#endif
 
 #ifdef SKEY
 #include <skey.h>
 #endif
 
+#ifdef WITH_OPENSSL
+#include <openssl/dh.h>
+#endif
+
+#include "openbsd-compat/sys-queue.h"
 #include "atomicio.h"
 #include "xmalloc.h"
 #include "ssh.h"
@@ -64,7 +74,13 @@ __RCSID("$NetBSD: monitor.c,v 1.16 2015/08/13 10:33:21 christos Exp $");
 #include "cipher.h"
 #include "kex.h"
 #include "dh.h"
-#include <zlib.h>
+#ifdef TARGET_OS_MAC	/* XXX Broken krb5 headers on Mac */
+#undef TARGET_OS_MAC
+#include "zlib.h"
+#define TARGET_OS_MAC 1
+#else
+#include "zlib.h"
+#endif
 #include "packet.h"
 #include "auth-options.h"
 #include "sshpty.h"
@@ -136,18 +152,16 @@ int mm_answer_pam_respond(int, Buffer *);
 int mm_answer_pam_free_ctx(int, Buffer *);
 #endif
 
-#ifdef KRB4
-int mm_answer_krb4(int, Buffer *);
-#endif
-#ifdef KRB5
-int mm_answer_krb5(int, Buffer *);
-#endif
-
 #ifdef GSSAPI
 int mm_answer_gss_setup_ctx(int, Buffer *);
 int mm_answer_gss_accept_ctx(int, Buffer *);
 int mm_answer_gss_userok(int, Buffer *);
 int mm_answer_gss_checkmic(int, Buffer *);
+#endif
+
+#ifdef SSH_AUDIT_EVENTS
+int mm_answer_audit_event(int, Buffer *);
+int mm_answer_audit_command(int, Buffer *);
 #endif
 
 static int monitor_read_log(struct monitor *);
@@ -164,8 +178,8 @@ static u_int key_bloblen = 0;
 static int key_blobtype = MM_NOKEY;
 static char *hostbased_cuser = NULL;
 static char *hostbased_chost = NULL;
-static const char *auth_method = "unknown";
-static const char *auth_submethod = NULL;
+static char *auth_method = "unknown";
+static char *auth_submethod = NULL;
 static u_int session_id2_len = 0;
 static u_char *session_id2 = NULL;
 static pid_t monitor_child_pid;
@@ -202,6 +216,9 @@ struct mon_table mon_dispatch_proto20[] = {
     {MONITOR_REQ_PAM_RESPOND, MON_ISAUTH, mm_answer_pam_respond},
     {MONITOR_REQ_PAM_FREE_CTX, MON_ONCE|MON_AUTHDECIDE, mm_answer_pam_free_ctx},
 #endif
+#ifdef SSH_AUDIT_EVENTS
+    {MONITOR_REQ_AUDIT_EVENT, MON_PERMIT, mm_answer_audit_event},
+#endif
 #ifdef BSD_AUTH
     {MONITOR_REQ_BSDAUTHQUERY, MON_ISAUTH, mm_answer_bsdauthquery},
     {MONITOR_REQ_BSDAUTHRESPOND, MON_AUTH, mm_answer_bsdauthrespond},
@@ -212,12 +229,6 @@ struct mon_table mon_dispatch_proto20[] = {
 #endif
     {MONITOR_REQ_KEYALLOWED, MON_ISAUTH, mm_answer_keyallowed},
     {MONITOR_REQ_KEYVERIFY, MON_AUTH, mm_answer_keyverify},
-#ifdef KRB4
-    {MONITOR_REQ_KRB4, MON_ONCE|MON_AUTH, mm_answer_krb4},
-#endif
-#ifdef KRB5
-    {MONITOR_REQ_KRB5, MON_ONCE|MON_AUTH, mm_answer_krb5},
-#endif
 #ifdef GSSAPI
     {MONITOR_REQ_GSSSETUP, MON_ISAUTH, mm_answer_gss_setup_ctx},
     {MONITOR_REQ_GSSSTEP, MON_ISAUTH, mm_answer_gss_accept_ctx},
@@ -235,6 +246,10 @@ struct mon_table mon_dispatch_postauth20[] = {
     {MONITOR_REQ_PTY, 0, mm_answer_pty},
     {MONITOR_REQ_PTYCLEANUP, 0, mm_answer_pty_cleanup},
     {MONITOR_REQ_TERM, 0, mm_answer_term},
+#ifdef SSH_AUDIT_EVENTS
+    {MONITOR_REQ_AUDIT_EVENT, MON_PERMIT, mm_answer_audit_event},
+    {MONITOR_REQ_AUDIT_COMMAND, MON_PERMIT, mm_answer_audit_command},
+#endif
     {0, 0, NULL}
 };
 
@@ -264,13 +279,10 @@ struct mon_table mon_dispatch_proto15[] = {
     {MONITOR_REQ_PAM_RESPOND, MON_ISAUTH, mm_answer_pam_respond},
     {MONITOR_REQ_PAM_FREE_CTX, MON_ONCE|MON_AUTHDECIDE, mm_answer_pam_free_ctx},
 #endif
-#ifdef KRB4
-    {MONITOR_REQ_KRB4, MON_ONCE|MON_AUTH, mm_answer_krb4},
+#ifdef SSH_AUDIT_EVENTS
+    {MONITOR_REQ_AUDIT_EVENT, MON_PERMIT, mm_answer_audit_event},
 #endif
-#ifdef KRB5
-    {MONITOR_REQ_KRB5, MON_ONCE|MON_AUTH, mm_answer_krb5},
-#endif
-#endif
+#endif /* WITH_SSH1 */
     {0, 0, NULL}
 };
 
@@ -279,7 +291,11 @@ struct mon_table mon_dispatch_postauth15[] = {
     {MONITOR_REQ_PTY, MON_ONCE, mm_answer_pty},
     {MONITOR_REQ_PTYCLEANUP, MON_ONCE, mm_answer_pty_cleanup},
     {MONITOR_REQ_TERM, 0, mm_answer_term},
+#ifdef SSH_AUDIT_EVENTS
+    {MONITOR_REQ_AUDIT_EVENT, MON_PERMIT, mm_answer_audit_event},
+    {MONITOR_REQ_AUDIT_COMMAND, MON_PERMIT|MON_ONCE, mm_answer_audit_command},
 #endif
+#endif /* WITH_SSH1 */
     {0, 0, NULL}
 };
 
@@ -328,6 +344,8 @@ monitor_child_preauth(Authctxt *_authctxt, struct monitor *pmonitor)
 
 	authctxt = _authctxt;
 	memset(authctxt, 0, sizeof(*authctxt));
+
+	authctxt->loginmsg = &loginmsg;
 
 	if (compat20) {
 		mon_dispatch = mon_dispatch_proto20;
@@ -432,6 +450,9 @@ monitor_child_postauth(struct monitor *pmonitor)
 	signal(SIGHUP, &monitor_child_handler);
 	signal(SIGTERM, &monitor_child_handler);
 	signal(SIGINT, &monitor_child_handler);
+#ifdef SIGXFSZ
+	signal(SIGXFSZ, SIG_IGN);
+#endif
 
 	if (compat20) {
 		mon_dispatch = mon_dispatch_postauth20;
@@ -673,8 +694,7 @@ mm_answer_sign(int sock, Buffer *m)
 	u_char *p;
 	u_char *signature;
 	size_t datlen, siglen;
-	uint32_t keyid;
-	int r, is_proof = 0;
+	int r, keyid, is_proof = 0;
 	const char proof_req[] = "hostkeys-prove-00@openssh.com";
 
 	debug3("%s", __func__);
@@ -798,8 +818,12 @@ mm_answer_pwnamallow(int sock, Buffer *m)
 	buffer_put_string(m, pwent, sizeof(struct passwd));
 	buffer_put_cstring(m, pwent->pw_name);
 	buffer_put_cstring(m, "*");
+#ifdef HAVE_STRUCT_PASSWD_PW_GECOS
 	buffer_put_cstring(m, pwent->pw_gecos);
+#endif
+#ifdef HAVE_STRUCT_PASSWD_PW_CLASS
 	buffer_put_cstring(m, pwent->pw_class);
+#endif
 	buffer_put_cstring(m, pwent->pw_dir);
 	buffer_put_cstring(m, pwent->pw_shell);
 
@@ -840,7 +864,6 @@ mm_answer_pwnamallow(int sock, Buffer *m)
 		monitor_permit(mon_dispatch, MONITOR_REQ_AUTHSERV, 1);
 		monitor_permit(mon_dispatch, MONITOR_REQ_AUTH2_READ_BANNER, 1);
 	}
-
 #ifdef USE_PAM
 	if (options.use_pam)
 		monitor_permit(mon_dispatch, MONITOR_REQ_PAM_START, 1);
@@ -982,7 +1005,7 @@ mm_answer_skeyquery(int sock, Buffer *m)
 	char challenge[1024];
 	u_int success;
 
-	success = skeychallenge(&skey, authctxt->user, challenge,
+	success = _compat_skeychallenge(&skey, authctxt->user, challenge,
 	    sizeof(challenge)) < 0 ? 0 : 1;
 
 	buffer_clear(m);
@@ -1078,8 +1101,8 @@ mm_answer_pam_init_ctx(int sock, Buffer *m)
 int
 mm_answer_pam_query(int sock, Buffer *m)
 {
-	char *name, *info, **prompts;
-	u_int i, num, *echo_on;
+	char *name = NULL, *info = NULL, **prompts = NULL;
+	u_int i, num = 0, *echo_on = 0;
 	int ret;
 
 	debug3("%s", __func__);
@@ -1101,11 +1124,10 @@ mm_answer_pam_query(int sock, Buffer *m)
 		free(prompts[i]);
 		buffer_put_int(m, echo_on[i]);
 	}
-	if (prompts != NULL)
-		free(prompts);
-	if (echo_on != NULL)
-		free(echo_on);
-	auth_method = "keyboard-interactive/pam";
+	free(prompts);
+	free(echo_on);
+	auth_method = "keyboard-interactive";
+	auth_submethod = "pam";
 	mm_request_send(sock, MONITOR_ANS_PAM_QUERY, m);
 	return (0);
 }
@@ -1121,7 +1143,7 @@ mm_answer_pam_respond(int sock, Buffer *m)
 	sshpam_authok = NULL;
 	num = buffer_get_int(m);
 	if (num > 0) {
-		resp = xmalloc(num * sizeof(char *));
+		resp = xcalloc(num, sizeof(char *));
 		for (i = 0; i < num; ++i)
 			resp[i] = buffer_get_string(m, NULL);
 		ret = (sshpam_device.respond)(sshpam_ctxt, num, resp);
@@ -1134,7 +1156,8 @@ mm_answer_pam_respond(int sock, Buffer *m)
 	buffer_clear(m);
 	buffer_put_int(m, ret);
 	mm_request_send(sock, MONITOR_ANS_PAM_RESPOND, m);
-	auth_method = "keyboard-interactive/pam";
+	auth_method = "keyboard-interactive";
+	auth_submethod = "pam";
 	if (ret == 0)
 		sshpam_authok = sshpam_ctxt;
 	return (0);
@@ -1150,7 +1173,8 @@ mm_answer_pam_free_ctx(int sock, Buffer *m)
 	sshpam_ctxt = sshpam_authok = NULL;
 	buffer_clear(m);
 	mm_request_send(sock, MONITOR_ANS_PAM_FREE_CTX, m);
-	auth_method = "keyboard-interactive/pam";
+	auth_method = "keyboard-interactive";
+	auth_submethod = "pam";
 	return r;
 }
 #endif
@@ -1228,9 +1252,6 @@ mm_answer_keyallowed(int sock, Buffer *m)
 			break;
 		}
 	}
-	debug3("%s: key %p is %s",
-	    __func__, key, allowed ? "allowed" : "not allowed");
-
 	if (key != NULL)
 		key_free(key);
 
@@ -1251,6 +1272,9 @@ mm_answer_keyallowed(int sock, Buffer *m)
 		free(cuser);
 		free(chost);
 	}
+
+	debug3("%s: key %p is %s",
+	    __func__, key, allowed ? "allowed" : "not allowed");
 
 	buffer_clear(m);
 	buffer_put_int(m, allowed);
@@ -1276,7 +1300,7 @@ monitor_valid_userblob(u_char *data, u_int datalen)
 	buffer_append(&b, data, datalen);
 
 	if (datafellows & SSH_OLD_SESSIONID) {
-		p = (char *)buffer_ptr(&b);
+		p = buffer_ptr(&b);
 		len = buffer_len(&b);
 		if ((session_id2 == NULL) ||
 		    (len < session_id2_len) ||
@@ -1747,91 +1771,6 @@ mm_answer_rsa_response(int sock, Buffer *m)
 }
 #endif
 
-#ifdef KRB4
-int
-mm_answer_krb4(int socket, Buffer *m)
-{
-	KTEXT_ST auth, reply;
-	char  *client, *p;
-	int success;
-	u_int alen;
-
-	reply.length = auth.length = 0;
- 
-	p = buffer_get_string(m, &alen);
-	if (alen >=  MAX_KTXT_LEN)
-		 fatal("%s: auth too large", __func__);
-	memcpy(auth.dat, p, alen);
-	auth.length = alen;
-	memset(p, 0, alen);
-	free(p);
-
-	success = options.kerberos_authentication &&
-	    authctxt->valid &&
-	    auth_krb4(authctxt, &auth, &client, &reply);
-
-	memset(auth.dat, 0, alen);
-	buffer_clear(m);
-	buffer_put_int(m, success);
-
-	if (success) {
-		buffer_put_cstring(m, client);
-		buffer_put_string(m, reply.dat, reply.length);
-		if (client)
-			free(client);
-		if (reply.length)
-			memset(reply.dat, 0, reply.length);
-	}
-
-	debug3("%s: sending result %d", __func__, success);
-	mm_request_send(socket, MONITOR_ANS_KRB4, m);
-
-	auth_method = "kerberos";
-
-	/* Causes monitor loop to terminate if authenticated */
-	return (success);
-}
-#endif
-
-#ifdef KRB5
-int
-mm_answer_krb5(int xsocket, Buffer *m)
-{
-	krb5_data tkt, reply;
-	char *client_user;
-	u_int len;
-	int success;
-
-	/* use temporary var to avoid size issues on 64bit arch */
-	tkt.data = buffer_get_string(m, &len);
-	tkt.length = len;
-
-	success = options.kerberos_authentication &&
-	    authctxt->valid &&
-	    auth_krb5(authctxt, &tkt, &client_user, &reply);
-
-	if (tkt.length)
-		free(tkt.data);
-
-	buffer_clear(m);
-	buffer_put_int(m, success);
-
-	if (success) {
-		buffer_put_cstring(m, client_user);
-		buffer_put_string(m, reply.data, reply.length);
-		if (client_user)
-			free(client_user);
-		if (reply.length)
-			free(reply.data);
-	}
-	mm_request_send(xsocket, MONITOR_ANS_KRB5, m);
-
-	auth_method = "kerberos";
-
-	return success;
-}
-#endif
-
 int
 mm_answer_term(int sock, Buffer *req)
 {
@@ -1843,6 +1782,11 @@ mm_answer_term(int sock, Buffer *req)
 	/* The child is terminating */
 	session_destroy_all(&mm_session_close);
 
+#ifdef USE_PAM
+	if (options.use_pam)
+		sshpam_cleanup();
+#endif
+
 	while (waitpid(pmonitor->m_pid, &status, 0) == -1)
 		if (errno != EINTR)
 			exit(1);
@@ -1852,6 +1796,48 @@ mm_answer_term(int sock, Buffer *req)
 	/* Terminate process */
 	exit(res);
 }
+
+#ifdef SSH_AUDIT_EVENTS
+/* Report that an audit event occurred */
+int
+mm_answer_audit_event(int socket, Buffer *m)
+{
+	ssh_audit_event_t event;
+
+	debug3("%s entering", __func__);
+
+	event = buffer_get_int(m);
+	switch(event) {
+	case SSH_AUTH_FAIL_PUBKEY:
+	case SSH_AUTH_FAIL_HOSTBASED:
+	case SSH_AUTH_FAIL_GSSAPI:
+	case SSH_LOGIN_EXCEED_MAXTRIES:
+	case SSH_LOGIN_ROOT_DENIED:
+	case SSH_CONNECTION_CLOSE:
+	case SSH_INVALID_USER:
+		audit_event(event);
+		break;
+	default:
+		fatal("Audit event type %d not permitted", event);
+	}
+
+	return (0);
+}
+
+int
+mm_answer_audit_command(int socket, Buffer *m)
+{
+	u_int len;
+	char *cmd;
+
+	debug3("%s entering", __func__);
+	cmd = buffer_get_string(m, &len);
+	/* sanity check command, if so how? */
+	audit_run_command(cmd);
+	free(cmd);
+	return (0);
+}
+#endif /* SSH_AUDIT_EVENTS */
 
 void
 monitor_apply_keystate(struct monitor *pmonitor)
@@ -1873,8 +1859,10 @@ monitor_apply_keystate(struct monitor *pmonitor)
 		kex->kex[KEX_DH_GRP14_SHA1] = kexdh_server;
 		kex->kex[KEX_DH_GEX_SHA1] = kexgex_server;
 		kex->kex[KEX_DH_GEX_SHA256] = kexgex_server;
+# ifdef OPENSSL_HAS_ECC
 		kex->kex[KEX_ECDH_SHA2] = kexecdh_server;
-#endif
+# endif
+#endif /* WITH_OPENSSL */
 		kex->kex[KEX_C25519_SHA256] = kexc25519_server;
 		kex->load_host_public_key=&get_hostkey_public_by_type;
 		kex->load_host_private_key=&get_hostkey_private_by_type;

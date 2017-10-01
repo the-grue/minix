@@ -14,9 +14,8 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-#define SSHKEY_INTERNAL
+
 #include "includes.h"
-__RCSID("$NetBSD: ssh-ed25519.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include <sys/types.h>
 #include <limits.h>
@@ -28,6 +27,7 @@ __RCSID("$NetBSD: ssh-ed25519.c,v 1.3 2015/04/03 23:58:19 christos Exp $");
 
 #include "log.h"
 #include "sshbuf.h"
+#define SSHKEY_INTERNAL
 #include "sshkey.h"
 #include "ssherr.h"
 #include "ssh.h"
