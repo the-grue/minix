@@ -54,6 +54,7 @@
 ./etc/saslc.d/saslc
 ./etc/saslc.d/saslc/mech
 ./etc/skel
+./etc/ssh
 ./etc/system.conf.d
 ./home
 ./lib
