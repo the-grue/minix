@@ -4,7 +4,7 @@
 
 .include "../Makefile.inc"
 
-LIB=	ssh
+LIB=ssh
 
 .if defined(__MINIX)
 SRCS=   ssh_api.c \
