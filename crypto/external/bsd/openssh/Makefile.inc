@@ -42,7 +42,7 @@ CPPFLAGS+=-DX11BASE=\"/usr/X11R7\"
 CPPFLAGS+=-DSUPPORT_UTMP -DSUPPORT_UTMPX
 .if defined(__MINIX)
 CPPFLAGS+=-DWITH_SSH1 -DWITH_OPENSSL -D_OPENBSD_SOURCE
-CPPFLAGS+=-g -O2 -Wall -Wpointer-arith -Wuninitialized -Wsign-compare -Wformat-security -Wno-pointer-sign -Wno-unused-result -fno-strict-aliasing -D_FORTIFY_SOURCE=2 -ftrapv -fno-builtin-memset -Wno-error
+CPPFLAGS+=-g -O2 -Qunused-arguments -Wunknown-warning-option -Wall -Wpointer-arith -Wuninitialized -Wsign-compare -Wformat-security -Wsizeof-pointer-memaccess -Wno-pointer-sign -Wno-unused-result -fno-strict-aliasing -D_FORTIFY_SOURCE=2 -ftrapv -fno-builtin-memset -fstack-protector-strong -Wno-error
 CPPFLAGS+=-I. -I$(srcdir)  $(PATHS) -DHAVE_CONFIG_H
 .else
 CPPFLAGS+=-DWITH_SSH1 -DWITH_OPENSSL -DENABLE_PKCS11 -D_OPENBSD_SOURCE
