@@ -163,6 +163,7 @@
 ./etc/rc.d/pwcheck                                      minix-base
 ./etc/rc.d/root                                         minix-base
 ./etc/rc.d/rtadvd                                       minix-base
+./etc/rc.d/sshd                                         minix-base      crypto
 ./etc/rc.d/staticroute                                  minix-base
 ./etc/rc.d/sysctl                                       minix-base
 ./etc/rc.d/sysdb                                        minix-base
@@ -194,6 +195,7 @@
 ./etc/spwd.db                                           minix-base
 ./etc/ssh                                               minix-base
 ./etc/ssh/ssh_config                                    minix-base      crypto
+./etc/ssh/ssh_known_hosts                               minix-base      crypto
 ./etc/ssh/sshd_config                                   minix-base      crypto
 ./etc/syslog.conf                                       minix-base
 ./etc/system.conf                                       minix-base
